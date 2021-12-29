@@ -216,40 +216,48 @@ pub mod helpers {
         res
     }
 
-    pub fn replace_none_with(array : &Vec<Vec<Option<u32>>>, default : u32) -> Vec<Vec<u32>>{
-        array.iter().map(|op| op.iter().map(|v| {
-            match v {
-                Some(p) => p.clone(),
-                None => default
-            }
-        }).collect()).collect()
+    pub fn replace_none_with(array: &Vec<Vec<Option<u32>>>, default: u32) -> Vec<Vec<u32>> {
+        array
+            .iter()
+            .map(|op| {
+                op.iter()
+                    .map(|v| match v {
+                        Some(p) => p.clone(),
+                        None => default,
+                    })
+                    .collect()
+            })
+            .collect()
     }
 
-    pub fn neighbours<T : Clone>(pos : Position, array : &Vec<Vec<T>>, close : usize) -> Vec<T> {
+    pub fn neighbours<T: Clone>(pos: Position, array: &Vec<Vec<T>>, close: usize) -> Vec<T> {
         if close == 0 {
-            return match array.get(pos.y as usize).and_then(|f| f.get(pos.x as usize)) {
+            return match array
+                .get(pos.y as usize)
+                .and_then(|f| f.get(pos.x as usize))
+            {
                 Some(v) => vec![v.clone()],
-                None => vec![]
-            }
+                None => vec![],
+            };
         }
         let mut res = Vec::with_capacity(8 * close);
-        let (x,y) = (pos.x as i64, pos.y as i64);
-        for i in [y-close as i64, y+close as i64] {
+        let (x, y) = (pos.x as i64, pos.y as i64);
+        for i in [y - close as i64, y + close as i64] {
             if i < 0 {
                 continue;
             }
-            for j in x-close as i64..x+ 1 +close as i64 {
+            for j in x - close as i64..x + 1 + close as i64 {
                 if j < 0 {
                     continue;
                 }
                 res.push(array.get(i as usize).and_then(|f| f.get(j as usize)));
             }
         }
-        for j in [x-close as i64, x+close as i64] {
+        for j in [x - close as i64, x + close as i64] {
             if j < 0 {
                 continue;
             }
-            for i in y-close as i64+1..y+close as i64 {
+            for i in y - close as i64 + 1..y + close as i64 {
                 if i < 0 {
                     continue;
                 }
@@ -257,10 +265,12 @@ pub mod helpers {
             }
         }
 
-        res.iter().filter_map(|f| f.and_then(|f| Some(f.clone()))).collect()
+        res.iter()
+            .filter_map(|f| f.and_then(|f| Some(f.clone())))
+            .collect()
     }
 
-    pub fn fix_none(array : &mut Vec<Vec<Option<u32>>>) {
+    pub fn fix_none(array: &mut Vec<Vec<Option<u32>>>) {
         let mut found = false;
         for r in array.iter() {
             for el in r {
@@ -273,22 +283,26 @@ pub mod helpers {
         if !found {
             return;
         }
-        let (h,w) = (array.len(), array[0].len());
-        let min_dim = if h < w {h} else {w};
+        let (h, w) = (array.len(), array[0].len());
+        let min_dim = if h < w { h } else { w };
         let arr_clone = array.clone();
-        array.par_iter_mut().enumerate().for_each(|(y,v)|{
-            v.iter_mut().enumerate().for_each(|(x,f)| {
+        array.par_iter_mut().enumerate().for_each(|(y, v)| {
+            v.iter_mut().enumerate().for_each(|(x, f)| {
                 if f.is_some() {
                     return;
                 }
                 for i in 1..min_dim {
-                    let mut neighbours : Vec<u32> = helpers::neighbours(Position::new(x as u32,y as u32), &arr_clone, i).into_iter().filter_map(|f| f).collect();
+                    let mut neighbours: Vec<u32> =
+                        helpers::neighbours(Position::new(x as u32, y as u32), &arr_clone, i)
+                            .into_iter()
+                            .filter_map(|f| f)
+                            .collect();
                     if neighbours.len() == 0 {
                         continue;
                     }
                     neighbours.sort();
                     let l = neighbours.len();
-                    *f = neighbours.get((l-1)/2).and_then(|f| Some(f.clone()));
+                    *f = neighbours.get((l - 1) / 2).and_then(|f| Some(f.clone()));
                     return;
                 }
             })
@@ -396,6 +410,28 @@ impl DepthImage<ImageBuffer<Rgb<u16>, Vec<u16>>> {
             }
         })
     }
+
+    pub fn broaden_depth(&mut self) {
+        let min = self
+            .depth
+            .iter()
+            .map(|f| f.iter().min().unwrap_or(&0))
+            .min()
+            .unwrap_or(&0)
+            .clone();
+        let max = self
+            .depth
+            .iter()
+            .map(|f| f.iter().max().unwrap_or(&u32::MAX))
+            .max()
+            .unwrap_or(&u32::MAX)
+            .clone();
+        let delta = (max - min) as f64;
+        self.depth.par_iter_mut().for_each(|op| {
+            op.iter_mut()
+                .for_each(|v| *v = (((v.clone() - min) as f64 / delta) * u32::MAX as f64) as u32)
+        });
+    }
 }
 #[allow(dead_code)]
 impl DepthImage<ImageBuffer<Luma<u16>, Vec<u16>>> {
@@ -458,6 +494,28 @@ impl DepthImage<ImageBuffer<Luma<u16>, Vec<u16>>> {
         disage::converters::to_luma8_from32(&self.depth)
     }
 
+    pub fn broaden_depth(&mut self) {
+        let min = self
+            .depth
+            .iter()
+            .map(|f| f.iter().min().unwrap_or(&0))
+            .min()
+            .unwrap_or(&0)
+            .clone();
+        let max = self
+            .depth
+            .iter()
+            .map(|f| f.iter().max().unwrap_or(&u32::MAX))
+            .max()
+            .unwrap_or(&u32::MAX)
+            .clone();
+        let delta = (max - min) as f64;
+        self.depth.par_iter_mut().for_each(|op| {
+            op.iter_mut()
+                .for_each(|v| *v = (((v.clone() - min) as f64 / delta) * u32::MAX as f64) as u32)
+        });
+    }
+
     pub fn get_pixel(&self, x: u32, y: u32) -> DepthPixel<Luma<u16>> {
         DepthPixel::new(
             self.pixels.get_pixel(x, y).clone(),
@@ -505,12 +563,32 @@ mod tests {
 
     #[test]
     fn fix_none_test() {
-        let mut arr = vec![vec![None, Some(1u32), Some(2u32)], vec![None, None, Some(5)], vec![Some(6), Some(7), None]];
-        let arr_fixed = vec![vec![Some(1), Some(1u32), Some(2u32)], vec![Some(6), Some(5), Some(5)], vec![Some(6), Some(7), Some(5)]];
-        let mut arr_none : Vec<Vec<Option<u32>>> = vec![vec![None, None, None], vec![None, None, None], vec![None, None, None]];
+        let mut arr = vec![
+            vec![None, Some(1u32), Some(2u32)],
+            vec![None, None, Some(5)],
+            vec![Some(6), Some(7), None],
+        ];
+        let arr_fixed = vec![
+            vec![Some(1), Some(1u32), Some(2u32)],
+            vec![Some(6), Some(5), Some(5)],
+            vec![Some(6), Some(7), Some(5)],
+        ];
+        let mut arr_none: Vec<Vec<Option<u32>>> = vec![
+            vec![None, None, None],
+            vec![None, None, None],
+            vec![None, None, None],
+        ];
         let arr_none_fixed = arr_none.clone();
-        let mut arr_one : Vec<Vec<Option<u32>>> = vec![vec![Some(1u32), None, None], vec![None, None, None], vec![None, None, None]];
-        let arr_one_fixed : Vec<Vec<Option<u32>>> = vec![vec![Some(1u32), Some(1u32), Some(1u32)], vec![Some(1u32), Some(1u32), Some(1u32)], vec![Some(1u32), Some(1u32), Some(1u32)]];
+        let mut arr_one: Vec<Vec<Option<u32>>> = vec![
+            vec![Some(1u32), None, None],
+            vec![None, None, None],
+            vec![None, None, None],
+        ];
+        let arr_one_fixed: Vec<Vec<Option<u32>>> = vec![
+            vec![Some(1u32), Some(1u32), Some(1u32)],
+            vec![Some(1u32), Some(1u32), Some(1u32)],
+            vec![Some(1u32), Some(1u32), Some(1u32)],
+        ];
         helpers::fix_none(&mut arr);
         helpers::fix_none(&mut arr_none);
         helpers::fix_none(&mut arr_one);
@@ -522,14 +600,14 @@ mod tests {
     #[test]
     fn neighbours_test() {
         let arr = vec![vec![0u16, 1, 2], vec![3, 4, 5], vec![6, 7, 8]];
-        assert_eq!(helpers::neighbours(Position::new(0,0), &arr, 0), vec![0]);
-        let mut a = helpers::neighbours(Position::new(0,0), &arr, 1);
+        assert_eq!(helpers::neighbours(Position::new(0, 0), &arr, 0), vec![0]);
+        let mut a = helpers::neighbours(Position::new(0, 0), &arr, 1);
         a.sort();
-        assert_eq!(a, vec![1,3,4]);
-        let mut a = helpers::neighbours(Position::new(1,1), &arr, 1);
+        assert_eq!(a, vec![1, 3, 4]);
+        let mut a = helpers::neighbours(Position::new(1, 1), &arr, 1);
         a.sort();
-        assert_eq!(a, vec![0,1,2,3,5,6,7,8]);
-        let mut a = helpers::neighbours(Position::new(1,1), &arr, 10);
+        assert_eq!(a, vec![0, 1, 2, 3, 5, 6, 7, 8]);
+        let mut a = helpers::neighbours(Position::new(1, 1), &arr, 10);
         a.sort();
         assert_eq!(a, vec![]);
     }
@@ -637,9 +715,6 @@ mod tests {
             ),
             v.clone()
         );
-        assert_eq!(
-            helpers::depthp_to_array(&v, Dimensions::new(4, 4)),
-            pos_res
-        );
+        assert_eq!(helpers::depthp_to_array(&v, Dimensions::new(4, 4)), pos_res);
     }
 }
