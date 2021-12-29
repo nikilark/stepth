@@ -35,6 +35,10 @@ pub mod preparations {
         let sbr = sbr / img2.len() as u64;
         let diff: f64 = sbr as f64 / fbr as f64;
         let mut res = img1.clone();
+        if (1f64-diff).abs() < 0.1 {
+            println!("No need to change brightness");
+            return res;
+        }
         res.pixels_mut()
             .for_each(|f| f.0[0] = ((f.0[0] as f64) * diff) as u16);
         res
@@ -76,6 +80,10 @@ pub mod preparations {
         }
         let diff = [rgb2[0] / rgb1[0], rgb2[1] / rgb1[1], rgb2[2] / rgb1[2]];
         let mut res = img1.clone();
+        if (1f64-diff[0]).abs() < 0.1 && (1f64-diff[1]).abs() < 0.1 && (1f64-diff[2]).abs() < 0.1 {
+            println!("No need to change brightness");
+            return res;
+        }
         res.pixels_mut().for_each(|f| {
             for i in 0..3 {
                 f.0[i] = ((f.0[i] as f64) * diff[i]) as u16;
@@ -116,11 +124,12 @@ pub mod helpers {
         (((x1 - x2).pow(2) + (y1 - y2).pow(2)) as f64).sqrt() as u32
     }
 
-    pub fn distance_dot_array<T: std::cmp::Eq + Clone>(
+    pub fn distance_dot_array<T: Clone + disage::PixelOpps<T> + Debug>(
         what: &T,
         array: &Vec<Vec<T>>,
         from: Position,
         max: u32,
+        presition: T,
     ) -> Option<u32> {
         let (x, y): (u32, u32) = from.tuplexy();
         let x = x as i64;
@@ -139,7 +148,8 @@ pub mod helpers {
                     match get2d(&array, i, j) {
                         Some(v) => {
                             found = true;
-                            if v == what.clone() {
+
+                            if v.clone().substract(what.clone()).lt(presition.clone()) {
                                 return Some(distance_dot_dot(
                                     from,
                                     Position::new(j as u32, i as u32),
@@ -155,7 +165,7 @@ pub mod helpers {
                     match get2d(&array, i, j) {
                         Some(v) => {
                             found = true;
-                            if v == what.clone() {
+                            if v.clone().substract(what.clone()).lt(presition.clone()) {
                                 return Some(distance_dot_dot(
                                     from,
                                     Position::new(j as u32, i as u32),
@@ -173,25 +183,28 @@ pub mod helpers {
         None
     }
 
-    pub fn distance_discrete_pixels<T: Eq + Clone + std::marker::Sync>(
+    pub fn distance_discrete_pixels<
+        T: Clone + Copy + std::marker::Sync + disage::PixelOpps<T> + std::marker::Send + Debug,
+    >(
         pixels: &Vec<DiscretePixel<T>>,
         img_size: Dimensions,
         array: &Vec<Vec<T>>,
         max: u32,
+        precision: T,
     ) -> Vec<DPixelDis<T>> {
         let arr_dim = Dimensions {
             height: array.len() as u32,
             width: array[0].len() as u32,
         };
         let mut distances: Vec<Option<u32>> = vec![None; pixels.len()];
-        distances
-            .par_iter_mut()
-            .enumerate()
-            .for_each(|(index, val)| {
-                let pix = &pixels[index];
+        let chunk_size = 1 + pixels.len() / 20;
+        distances.par_chunks_mut(chunk_size).enumerate().for_each(|(ci,c)| {
+            c.iter_mut().enumerate().for_each(|(index, val)| {
+                let pix = &pixels[chunk_size * ci + index];
                 let rel_pos = relative_pos(pix.position, img_size, arr_dim);
-                *val = distance_dot_array(&pix.value, array, rel_pos, max);
-            });
+                *val = distance_dot_array(&pix.value, array, rel_pos, max, precision);
+            })
+        });
         pixels
             .to_vec()
             .into_iter()
@@ -286,25 +299,29 @@ pub mod helpers {
         let (h, w) = (array.len(), array[0].len());
         let min_dim = if h < w { h } else { w };
         let arr_clone = array.clone();
-        array.par_iter_mut().enumerate().for_each(|(y, v)| {
-            v.iter_mut().enumerate().for_each(|(x, f)| {
-                if f.is_some() {
-                    return;
-                }
-                for i in 1..min_dim {
-                    let mut neighbours: Vec<u32> =
-                        helpers::neighbours(Position::new(x as u32, y as u32), &arr_clone, i)
-                            .into_iter()
-                            .filter_map(|f| f)
-                            .collect();
-                    if neighbours.len() == 0 {
-                        continue;
+        let chunk_size = 1 + h / 20;
+        array.par_chunks_mut(chunk_size).enumerate().for_each(|(ci,c),| {
+            c.iter_mut().enumerate().for_each(|(y, v)| {
+                let y = chunk_size * ci + y;
+                v.iter_mut().enumerate().for_each(|(x, f)| {
+                    if f.is_some() {
+                        return;
                     }
-                    neighbours.sort();
-                    let l = neighbours.len();
-                    *f = neighbours.get((l - 1) / 2).and_then(|f| Some(f.clone()));
-                    return;
-                }
+                    for i in 1..min_dim {
+                        let mut neighbours: Vec<u32> =
+                            helpers::neighbours(Position::new(x as u32, y as u32), &arr_clone, i)
+                                .into_iter()
+                                .filter_map(|f| f)
+                                .collect();
+                        if neighbours.len() == 0 {
+                            continue;
+                        }
+                        neighbours.sort();
+                        let l = neighbours.len();
+                        *f = neighbours.get((l - 1) / 2).and_then(|f| Some(f.clone()));
+                        return;
+                    }
+                })
             })
         });
     }
@@ -331,28 +348,44 @@ impl DepthImage<ImageBuffer<Rgb<u16>, Vec<u16>>> {
     pub fn from_rgb16_relative(
         main_img: &ImageBuffer<Rgb<u16>, Vec<u16>>,
         additional_img: &ImageBuffer<Rgb<u16>, Vec<u16>>,
+        precision_dis: [u16; 3],
         precision: [u16; 3],
     ) -> Self {
         let adjusted_img = normalize_brightness_rgb16(&main_img, &additional_img);
+        println!("Brightness");
         let (h, w) = (adjusted_img.height(), adjusted_img.width());
+        let (ha, wa) = (additional_img.height(), additional_img.height());
+        println!("Main : ({}, {}), Sub : ({}, {})", h, w, ha, wa);
         let discrete = disage::open::rgb16(
             adjusted_img,
-            precision,
+            precision_dis,
             disage::hashers::BrightnessHasher {},
         );
-        let max = match h > w {
-            true => h,
-            _ => w,
+        disage::converters::to_rgb8_from16(&discrete.clone().collect(Some([0u16, 0, 0])))
+            .save("outputs/wtf.jpg")
+            .unwrap();
+        println!(
+            "Discrete, count : {}, compression : {}",
+            discrete.group_count(),
+            discrete.compression()
+        );
+        let max = match ha > wa {
+            true => ha,
+            _ => wa,
         };
-        let pixels: Vec<Rgb<u16>> = main_img.pixels().map(|f| f.clone()).collect();
+        let pixels: Vec<Rgb<u16>> = additional_img.pixels().map(|f| f.clone()).collect();
         let dpix = helpers::distance_discrete_pixels(
             &discrete.pixels(),
-            Dimensions::new(h, w),
-            &disage::DiscreteImage::<u8>::pixels_to_array(&pixels, w),
+            Dimensions::new(ha, wa),
+            &disage::DiscreteImage::<u8>::pixels_to_array(&pixels, wa),
             max,
+            precision,
         );
+        println!("Depth");
         let mut option_depth = helpers::depthp_to_array(&dpix, Dimensions::new(h, w));
+        println!("To array");
         helpers::fix_none(&mut option_depth);
+        println!("Fix none");
         DepthImage {
             depth: helpers::replace_none_with(&option_depth, 0),
             pixels: main_img.clone(),
@@ -362,6 +395,7 @@ impl DepthImage<ImageBuffer<Rgb<u16>, Vec<u16>>> {
     pub fn from_discrete_rgb16_relative(
         discrete: &DiscreteImage<[u16; 3]>,
         additional_img: &ImageBuffer<Rgb<u16>, Vec<u16>>,
+        precision: [u16; 3],
     ) -> Self {
         let (h, w) = discrete.size.tuplehw();
         let max = match h > w {
@@ -374,6 +408,7 @@ impl DepthImage<ImageBuffer<Rgb<u16>, Vec<u16>>> {
             Dimensions::new(h, w),
             &disage::DiscreteImage::<u16>::pixels_to_array(&pixels, w),
             max,
+            precision,
         );
         let mut option_depth = helpers::depthp_to_array(&dpix, Dimensions::new(h, w));
         helpers::fix_none(&mut option_depth);
@@ -427,132 +462,44 @@ impl DepthImage<ImageBuffer<Rgb<u16>, Vec<u16>>> {
             .unwrap_or(&u32::MAX)
             .clone();
         let delta = (max - min) as f64;
-        self.depth.par_iter_mut().for_each(|op| {
-            op.iter_mut()
-                .for_each(|v| *v = (((v.clone() - min) as f64 / delta) * u32::MAX as f64) as u32)
+        let chunk_size = self.depth.len() / 20;
+        self.depth.par_chunks_mut( 1 + chunk_size).for_each(|c| {
+            c.iter_mut().for_each(|op| {
+                op.iter_mut().for_each(|v| {
+                    *v = (((v.clone() - min) as f64 / delta) * u32::MAX as f64) as u32
+                })
+            })
         });
-    }
-}
-#[allow(dead_code)]
-impl DepthImage<ImageBuffer<Luma<u16>, Vec<u16>>> {
-    pub fn from_luma16_relative(
-        main_img: &ImageBuffer<Luma<u16>, Vec<u16>>,
-        additional_img: &ImageBuffer<Luma<u16>, Vec<u16>>,
-        precision: u16,
-    ) -> Self {
-        let adjusted_img = normalize_brightness_luma16(&main_img, &additional_img);
-        let (h, w) = (adjusted_img.height(), adjusted_img.width());
-        let discrete = disage::open::luma16(
-            adjusted_img,
-            precision,
-            disage::hashers::BrightnessHasher {},
-        );
-        let max = match h > w {
-            true => h,
-            _ => w,
-        };
-        let pixels: Vec<Luma<u16>> = main_img.pixels().map(|f| f.clone()).collect();
-        let dpix = helpers::distance_discrete_pixels(
-            &discrete.pixels(),
-            Dimensions::new(h, w),
-            &disage::DiscreteImage::<u8>::pixels_to_array(&pixels, w),
-            max,
-        );
-        let mut option_depth = helpers::depthp_to_array(&dpix, Dimensions::new(h, w));
-        helpers::fix_none(&mut option_depth);
-        DepthImage {
-            depth: helpers::replace_none_with(&option_depth, 0),
-            pixels: main_img.clone(),
-        }
-    }
-
-    pub fn from_discrete_luma16_relative(
-        discrete: &DiscreteImage<u16>,
-        additional_img: &ImageBuffer<Luma<u16>, Vec<u16>>,
-    ) -> Self {
-        let (h, w) = discrete.size.tuplehw();
-        let max = match h > w {
-            true => h,
-            _ => w,
-        };
-        let pixels: Vec<Luma<u16>> = additional_img.pixels().map(|f| f.clone()).collect();
-        let dpix = helpers::distance_discrete_pixels(
-            &discrete.pixels(),
-            Dimensions::new(h, w),
-            &disage::DiscreteImage::<u16>::pixels_to_array(&pixels, w),
-            max,
-        );
-        let mut option_depth = helpers::depthp_to_array(&dpix, Dimensions::new(h, w));
-        helpers::fix_none(&mut option_depth);
-        DepthImage {
-            depth: helpers::replace_none_with(&option_depth, 0),
-            pixels: disage::converters::to_luma16(&discrete.clone().collect(None)),
-        }
-    }
-
-    pub fn depth_image(&self) -> image::GrayImage {
-        disage::converters::to_luma8_from32(&self.depth)
-    }
-
-    pub fn broaden_depth(&mut self) {
-        let min = self
-            .depth
-            .iter()
-            .map(|f| f.iter().min().unwrap_or(&0))
-            .min()
-            .unwrap_or(&0)
-            .clone();
-        let max = self
-            .depth
-            .iter()
-            .map(|f| f.iter().max().unwrap_or(&u32::MAX))
-            .max()
-            .unwrap_or(&u32::MAX)
-            .clone();
-        let delta = (max - min) as f64;
-        self.depth.par_iter_mut().for_each(|op| {
-            op.iter_mut()
-                .for_each(|v| *v = (((v.clone() - min) as f64 / delta) * u32::MAX as f64) as u32)
-        });
-    }
-
-    pub fn get_pixel(&self, x: u32, y: u32) -> DepthPixel<Luma<u16>> {
-        DepthPixel::new(
-            self.pixels.get_pixel(x, y).clone(),
-            self.depth[y as usize][x as usize],
-        )
-    }
-
-    pub fn put_pixel(&mut self, x: u32, y: u32, pix: Luma<u16>) {
-        self.pixels.put_pixel(x, y, pix)
-    }
-
-    pub fn put_where(
-        &mut self,
-        other: &ImageBuffer<Luma<u16>, Vec<u16>>,
-        pred: &dyn Fn(&DepthPixel<Luma<u16>>) -> bool,
-    ) {
-        self.pixels.enumerate_pixels_mut().for_each(|(x, y, val)| {
-            let d = DepthPixel::new(val.clone(), self.depth[y as usize][x as usize]);
-            if pred(&d) {
-                *val = other.get_pixel(x, y).clone();
-            }
-        })
     }
 }
 
 fn main() {
-    let img1: ImageBuffer<Rgb<u16>, Vec<u16>> = image::io::Reader::open("inputs/2.jpg")
+    let img1: ImageBuffer<Rgb<u16>, Vec<u16>> = image::io::Reader::open("inputs/main.jpg")
         .unwrap()
         .decode()
         .unwrap()
+        .resize(600, 400, image::imageops::Gaussian)
         .to_rgb16();
-    let img2: ImageBuffer<Rgb<u16>, Vec<u16>> = image::io::Reader::open("inputs/3.jpg")
+    let img2: ImageBuffer<Rgb<u16>, Vec<u16>> = image::io::Reader::open("inputs/sub.jpg")
         .unwrap()
         .decode()
         .unwrap()
+        .resize(600, 400, image::imageops::Gaussian)
         .to_rgb16();
-    let di = DepthImage::from_rgb16_relative(&img1, &img2, [200u16, 200, 200]);
+    println!(
+        "Main : ({}, {}), Sub : ({}, {})",
+        img1.height(),
+        img1.width(),
+        img2.height(),
+        img2.width()
+    );
+    println!("Started creating...");
+
+    let mut di =
+        DepthImage::from_rgb16_relative(&img1, &img2, [600u16, 600, 600], [500u16, 500, 500]);
+    println!("Created");
+    di.broaden_depth();
+    println!("Broaded");
     di.depth_image().save("outputs/map.jpg").unwrap();
     println!("Hello, world!");
 }
@@ -648,23 +595,23 @@ mod tests {
     fn distance_dot_array_test() {
         let arr = vec![vec![0u16, 1, 2], vec![3, 4, 5], vec![6, 7, 8]];
         assert_eq!(
-            helpers::distance_dot_array(&0, &arr, Position::new(0, 0), 10),
+            helpers::distance_dot_array(&0, &arr, Position::new(0, 0), 10, 1),
             Some(0)
         );
         assert_eq!(
-            helpers::distance_dot_array(&0, &arr, Position::new(1, 1), 10),
+            helpers::distance_dot_array(&0, &arr, Position::new(1, 1), 10, 1),
             Some(1)
         );
         assert_eq!(
-            helpers::distance_dot_array(&0, &arr, Position::new(2, 2), 10),
+            helpers::distance_dot_array(&0, &arr, Position::new(2, 2), 10, 1),
             Some(2)
         );
         assert_eq!(
-            helpers::distance_dot_array(&0, &arr, Position::new(2, 2), 1),
+            helpers::distance_dot_array(&0, &arr, Position::new(2, 2), 1, 1),
             None
         );
         assert_eq!(
-            helpers::distance_dot_array(&0, &arr, Position::new(22, 22), 100),
+            helpers::distance_dot_array(&0, &arr, Position::new(22, 22), 100, 1),
             None
         );
     }
@@ -684,7 +631,7 @@ mod tests {
             (pix4, None),
         ];
         assert_eq!(
-            helpers::distance_discrete_pixels(&vpix, Dimensions::new(30, 30), &arr, 5),
+            helpers::distance_discrete_pixels(&vpix, Dimensions::new(30, 30), &arr, 5, 1),
             pos_res
         );
     }
@@ -711,7 +658,8 @@ mod tests {
                 &vec![pix1, pix2, pix3],
                 Dimensions::new(3, 3),
                 &arr,
-                3
+                3,
+                1
             ),
             v.clone()
         );
