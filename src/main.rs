@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 
 use disage::{self, Dimensions, DiscreteImage, DiscretePixel, Position};
-use image::{self, GenericImageView, ImageBuffer, Luma, Pixel, Primitive, Rgb};
+use image::{self, ImageBuffer, Luma, Pixel, Rgb};
 use preparations::*;
 use rayon::prelude::*;
 
@@ -202,20 +202,97 @@ pub mod helpers {
     pub fn depthp_to_array<T: Clone>(
         pixels: &Vec<DPixelDis<T>>,
         size: Dimensions,
-        none_value: u32,
-    ) -> Vec<Vec<u32>> {
-        let mut res = vec![vec![0; size.width as usize]; size.height as usize];
+    ) -> Vec<Vec<Option<u32>>> {
+        let mut res = vec![vec![Option::<u32>::None; size.width as usize]; size.height as usize];
         for (pix, dis) in pixels {
-            let col = dis.unwrap_or(none_value);
             let (x, y): (u32, u32) = pix.position.tuplexy();
             let (h, w): (u32, u32) = pix.size.tuplehw();
             for i in y..y + h {
                 for j in x..x + w {
-                    res[i as usize][j as usize] = col;
+                    res[i as usize][j as usize] = dis.clone();
                 }
             }
         }
         res
+    }
+
+    pub fn replace_none_with(array : &Vec<Vec<Option<u32>>>, default : u32) -> Vec<Vec<u32>>{
+        array.iter().map(|op| op.iter().map(|v| {
+            match v {
+                Some(p) => p.clone(),
+                None => default
+            }
+        }).collect()).collect()
+    }
+
+    pub fn neighbours<T : Clone>(pos : Position, array : &Vec<Vec<T>>, close : usize) -> Vec<T> {
+        if close == 0 {
+            return match array.get(pos.y as usize).and_then(|f| f.get(pos.x as usize)) {
+                Some(v) => vec![v.clone()],
+                None => vec![]
+            }
+        }
+        let mut res = Vec::with_capacity(8 * close);
+        let (x,y) = (pos.x as i64, pos.y as i64);
+        for i in [y-close as i64, y+close as i64] {
+            if i < 0 {
+                continue;
+            }
+            for j in x-close as i64..x+ 1 +close as i64 {
+                if j < 0 {
+                    continue;
+                }
+                res.push(array.get(i as usize).and_then(|f| f.get(j as usize)));
+            }
+        }
+        for j in [x-close as i64, x+close as i64] {
+            if j < 0 {
+                continue;
+            }
+            for i in y-close as i64+1..y+close as i64 {
+                if i < 0 {
+                    continue;
+                }
+                res.push(array.get(i as usize).and_then(|f| f.get(j as usize)));
+            }
+        }
+
+        res.iter().filter_map(|f| f.and_then(|f| Some(f.clone()))).collect()
+    }
+
+    pub fn fix_none(array : &mut Vec<Vec<Option<u32>>>) {
+        let mut found = false;
+        for r in array.iter() {
+            for el in r {
+                if el.is_some() {
+                    found = true;
+                    break;
+                }
+            }
+        }
+        if !found {
+            return;
+        }
+        let (h,w) = (array.len(), array[0].len());
+        let min_dim = if h < w {h} else {w};
+        let arr_clone = array.clone();
+        array.par_iter_mut().enumerate().for_each(|(y,v)|{
+            v.iter_mut().enumerate().for_each(|(x,f)| {
+                if f.is_some() {
+                    return;
+                }
+                for i in 1..min_dim {
+                    let mut neighbours : Vec<u32> = helpers::neighbours(Position::new(x as u32,y as u32), &arr_clone, i).into_iter().filter_map(|f| f).collect();
+                    if neighbours.len() == 0 {
+                        continue;
+                    }
+                    neighbours.sort();
+                    let l = neighbours.len();
+                    *f = neighbours.get((l-1)/2).and_then(|f| Some(f.clone()));
+                    return;
+                }
+            })
+        });
     }
 }
 
@@ -260,8 +337,10 @@ impl DepthImage<ImageBuffer<Rgb<u16>, Vec<u16>>> {
             &disage::DiscreteImage::<u8>::pixels_to_array(&pixels, w),
             max,
         );
+        let mut option_depth = helpers::depthp_to_array(&dpix, Dimensions::new(h, w));
+        helpers::fix_none(&mut option_depth);
         DepthImage {
-            depth: helpers::depthp_to_array(&dpix, Dimensions::new(h, w), 0),
+            depth: helpers::replace_none_with(&option_depth, 0),
             pixels: main_img.clone(),
         }
     }
@@ -282,8 +361,10 @@ impl DepthImage<ImageBuffer<Rgb<u16>, Vec<u16>>> {
             &disage::DiscreteImage::<u16>::pixels_to_array(&pixels, w),
             max,
         );
+        let mut option_depth = helpers::depthp_to_array(&dpix, Dimensions::new(h, w));
+        helpers::fix_none(&mut option_depth);
         DepthImage {
-            depth: helpers::depthp_to_array(&dpix, Dimensions::new(h, w), 0),
+            depth: helpers::replace_none_with(&option_depth, 0),
             pixels: disage::converters::to_rgb16(&discrete.clone().collect(None)),
         }
     }
@@ -341,8 +422,10 @@ impl DepthImage<ImageBuffer<Luma<u16>, Vec<u16>>> {
             &disage::DiscreteImage::<u8>::pixels_to_array(&pixels, w),
             max,
         );
+        let mut option_depth = helpers::depthp_to_array(&dpix, Dimensions::new(h, w));
+        helpers::fix_none(&mut option_depth);
         DepthImage {
-            depth: helpers::depthp_to_array(&dpix, Dimensions::new(h, w), 0),
+            depth: helpers::replace_none_with(&option_depth, 0),
             pixels: main_img.clone(),
         }
     }
@@ -363,8 +446,10 @@ impl DepthImage<ImageBuffer<Luma<u16>, Vec<u16>>> {
             &disage::DiscreteImage::<u16>::pixels_to_array(&pixels, w),
             max,
         );
+        let mut option_depth = helpers::depthp_to_array(&dpix, Dimensions::new(h, w));
+        helpers::fix_none(&mut option_depth);
         DepthImage {
-            depth: helpers::depthp_to_array(&dpix, Dimensions::new(h, w), 0),
+            depth: helpers::replace_none_with(&option_depth, 0),
             pixels: disage::converters::to_luma16(&discrete.clone().collect(None)),
         }
     }
@@ -417,6 +502,37 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fix_none_test() {
+        let mut arr = vec![vec![None, Some(1u32), Some(2u32)], vec![None, None, Some(5)], vec![Some(6), Some(7), None]];
+        let arr_fixed = vec![vec![Some(1), Some(1u32), Some(2u32)], vec![Some(6), Some(5), Some(5)], vec![Some(6), Some(7), Some(5)]];
+        let mut arr_none : Vec<Vec<Option<u32>>> = vec![vec![None, None, None], vec![None, None, None], vec![None, None, None]];
+        let arr_none_fixed = arr_none.clone();
+        let mut arr_one : Vec<Vec<Option<u32>>> = vec![vec![Some(1u32), None, None], vec![None, None, None], vec![None, None, None]];
+        let arr_one_fixed : Vec<Vec<Option<u32>>> = vec![vec![Some(1u32), Some(1u32), Some(1u32)], vec![Some(1u32), Some(1u32), Some(1u32)], vec![Some(1u32), Some(1u32), Some(1u32)]];
+        helpers::fix_none(&mut arr);
+        helpers::fix_none(&mut arr_none);
+        helpers::fix_none(&mut arr_one);
+        assert_eq!(arr, arr_fixed);
+        assert_eq!(arr_none, arr_none_fixed);
+        assert_eq!(arr_one, arr_one_fixed);
+    }
+
+    #[test]
+    fn neighbours_test() {
+        let arr = vec![vec![0u16, 1, 2], vec![3, 4, 5], vec![6, 7, 8]];
+        assert_eq!(helpers::neighbours(Position::new(0,0), &arr, 0), vec![0]);
+        let mut a = helpers::neighbours(Position::new(0,0), &arr, 1);
+        a.sort();
+        assert_eq!(a, vec![1,3,4]);
+        let mut a = helpers::neighbours(Position::new(1,1), &arr, 1);
+        a.sort();
+        assert_eq!(a, vec![0,1,2,3,5,6,7,8]);
+        let mut a = helpers::neighbours(Position::new(1,1), &arr, 10);
+        a.sort();
+        assert_eq!(a, vec![]);
+    }
 
     #[test]
     fn relative_pos_test() {
@@ -507,10 +623,10 @@ mod tests {
             (pix3.clone(), None),
         ];
         let pos_res = vec![
-            vec![0u32, 0, 2, 2],
-            vec![0, 0, 2, 2],
-            vec![0, 0, 111, 111],
-            vec![0, 0, 111, 111],
+            vec![Some(0u32), Some(0), Some(2), Some(2)],
+            vec![Some(0), Some(0), Some(2), Some(2)],
+            vec![Some(0), Some(0), None, None],
+            vec![Some(0), Some(0), None, None],
         ];
         assert_eq!(
             helpers::distance_discrete_pixels(
@@ -522,7 +638,7 @@ mod tests {
             v.clone()
         );
         assert_eq!(
-            helpers::depthp_to_array(&v, Dimensions::new(4, 4), 111),
+            helpers::depthp_to_array(&v, Dimensions::new(4, 4)),
             pos_res
         );
     }
