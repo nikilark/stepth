@@ -113,17 +113,23 @@ pub mod helpers {
     use std::cmp::Ordering;
 
     use disage::PixelOpps;
-    use image::GenericImageView;
 
     use super::*;
 
-    pub fn precision_rgb16(img : &ImageBuffer<Rgb<u16>, Vec<u16>>, percent : f32) -> [u16;3] {
+    pub fn precision_rgb16(img: &ImageBuffer<Rgb<u16>, Vec<u16>>, percent: f32) -> [u16; 3] {
         if percent < 0.0 || percent > 1.0 {
             println!("Wrong percent value : {}, should be in [0.0, 1.0]", percent);
             return [0, 0, 0];
         }
-        let mut previous = img.get_pixel(0,0).clone().0;
-        let mut diffs : Vec<[u16 ; 3]> = img.pixels().map(|f| {let d =  f.0.substract(previous.clone()); previous = f.0.clone(); d }).collect();
+        let mut previous = img.get_pixel(0, 0).clone().0;
+        let mut diffs: Vec<[u16; 3]> = img
+            .pixels()
+            .map(|f| {
+                let d = f.0.substract(previous.clone());
+                previous = f.0.clone();
+                d
+            })
+            .collect();
         diffs.sort_by(|a, b| {
             if a == b {
                 return Ordering::Equal;
@@ -136,12 +142,12 @@ pub mod helpers {
         diffs[(diffs.len() as f32 * percent) as usize].clone()
     }
 
-    pub fn precision_luma16(img : &ImageBuffer<Luma<u16>, Vec<u16>>, percent : f32) -> u16 {
+    pub fn precision_luma16(img: &ImageBuffer<Luma<u16>, Vec<u16>>, percent: f32) -> u16 {
         if percent < 0.0 || percent > 1.0 {
             println!("Wrong percent value : {}, should be in [0.0, 1.0]", percent);
             return 0;
         }
-        let mut pixels : Vec<u16> = img.pixels().map(|f| f.0[0]).collect();
+        let mut pixels: Vec<u16> = img.pixels().map(|f| f.0[0]).collect();
         pixels.sort();
         pixels[(pixels.len() as f32 * percent) as usize].clone()
     }
@@ -247,32 +253,44 @@ pub mod helpers {
                     *val = distance_dot_array(&pix.value, array, rel_pos, max, precision);
                 })
             });
-        let smoothed : Vec<Option<u32>> = match distances.len() > 3 {
+        let window_size = 5;
+        let smoothed: Vec<Option<u32>> = match distances.len() > window_size {
             true => {
-            let mut temp_smoothed :  Vec<Option<u32>> = 
-            distances.windows(3).map(|w| {
-            let somes : Vec<u64> = w.iter().filter_map(|v| v.and_then(|f| Some(f as u64))).collect();
-            let l = somes.len();
-            if l == 0 {
-                return None
+                let mut temp_smoothed: Vec<Option<u32>> = distances
+                    .windows(window_size)
+                    .map(|w| {
+                        let somes: Vec<u64> = w
+                            .iter()
+                            .filter_map(|v| v.and_then(|f| Some(f as u64)))
+                            .collect();
+                        match somes.len() {
+                            0 => None,
+                            sl => {
+                                let sum: u64 = somes.iter().sum();
+                                Some((sum / sl as u64) as u32)
+                            }
+                        }
+                    })
+                    .collect();
+                let dist_len = distances.len();
+                let somes: Vec<u64> = distances[dist_len - window_size - 1..dist_len]
+                    .iter()
+                    .filter_map(|v| v.and_then(|f| Some(f as u64)))
+                    .collect();
+                let last_val = match somes.len() {
+                    0 => None,
+                    sl => {
+                        let sum: u64 = somes.iter().sum();
+                        Some((sum / sl as u64) as u32)
+                    }
+                };
+                for _ in dist_len - window_size - 1..dist_len {
+                    temp_smoothed.push(last_val);
+                }
+                temp_smoothed
             }
-            let sum : u64 = somes.iter().sum();
-            Some((sum/l as u64) as u32)
-        }).collect();
-        let l = distances.len();
-        let somes : Vec<u64> = distances[l-2..l].iter().filter_map(|v| v.and_then(|f| Some(f as u64))).collect();
-        let last_val = match somes.len() {
-            0 => None,
-            sl => {let sum : u64 = somes.iter().sum();
-                Some((sum/sl as u64) as u32)}
+            false => distances.clone(),
         };
-        temp_smoothed.push(last_val);
-        temp_smoothed.push(last_val);
-        temp_smoothed
-    },
-    false => {
-        distances.clone()
-    }};
         assert_eq!(smoothed.len(), distances.len());
         pixels
             .to_vec()
@@ -369,15 +387,12 @@ impl DepthImage<ImageBuffer<Rgb<u16>, Vec<u16>>> {
             main_img.clone(),
             precision,
             disage::hashers::MedianBrightnessHasher {},
-            18
+            18,
         );
         disage::converters::to_rgb8_from16(&discrete.clone().collect(Some([0u16, 0, 0])))
             .save("outputs/wtf2.jpg")
             .unwrap();
-        println!(
-            "Discrete, compression : {}",
-            discrete.compression()
-        );
+        println!("Discrete, compression : {}", discrete.compression());
         let max = match ha > wa {
             true => ha,
             _ => wa,
@@ -392,7 +407,10 @@ impl DepthImage<ImageBuffer<Rgb<u16>, Vec<u16>>> {
         );
         println!("Depth");
         DepthImage {
-            depth: helpers::replace_none_with(&helpers::depthp_to_array(&dpix, Dimensions::new(h, w)), 0),
+            depth: helpers::replace_none_with(
+                &helpers::depthp_to_array(&dpix, Dimensions::new(h, w)),
+                0,
+            ),
             pixels: main_img.clone(),
         }
     }
@@ -416,7 +434,10 @@ impl DepthImage<ImageBuffer<Rgb<u16>, Vec<u16>>> {
             precision,
         );
         DepthImage {
-            depth: helpers::replace_none_with(&helpers::depthp_to_array(&dpix, Dimensions::new(h, w)), 0),
+            depth: helpers::replace_none_with(
+                &helpers::depthp_to_array(&dpix, Dimensions::new(h, w)),
+                0,
+            ),
             pixels: disage::converters::to_rgb16(&discrete.clone().collect(None)),
         }
     }
@@ -485,8 +506,10 @@ fn main() {
     println!("Precision : {:?}", precision);
     let di = DepthImage::from_rgb16_relative(&img1, &img2, precision.clone());
     println!("Created");
-    di.broaden_depth().depth_image().save("outputs/map.jpg")
-    .unwrap();
+    di.broaden_depth()
+        .depth_image()
+        .save("outputs/map.jpg")
+        .unwrap();
     println!("Hello, world!");
 }
 
@@ -496,12 +519,18 @@ mod tests {
 
     #[test]
     fn precision_test() {
-        let mut img_rgb : ImageBuffer<Rgb<u16>, Vec<u16>> = image::ImageBuffer::new(3, 3);
-        img_rgb.pixels_mut().enumerate().for_each(|(i,v)| *v = Rgb([i as u16,i as u16,i as u16]));
-        let mut img_luma : ImageBuffer<Luma<u16>, Vec<u16>> = image::ImageBuffer::new(3, 3);
-        img_luma.pixels_mut().enumerate().for_each(|(i,v)| *v = Luma([i as u16]));
-        assert_eq!(helpers::precision_rgb16(&img_rgb, 0.1),[1,1,1]);
-        assert_eq!(helpers::precision_luma16(&img_luma, 0.5),1);
+        let mut img_rgb: ImageBuffer<Rgb<u16>, Vec<u16>> = image::ImageBuffer::new(3, 3);
+        img_rgb
+            .pixels_mut()
+            .enumerate()
+            .for_each(|(i, v)| *v = Rgb([i as u16, i as u16, i as u16]));
+        let mut img_luma: ImageBuffer<Luma<u16>, Vec<u16>> = image::ImageBuffer::new(3, 3);
+        img_luma
+            .pixels_mut()
+            .enumerate()
+            .for_each(|(i, v)| *v = Luma([i as u16]));
+        assert_eq!(helpers::precision_rgb16(&img_rgb, 0.1), [1, 1, 1]);
+        assert_eq!(helpers::precision_luma16(&img_luma, 0.5), 1);
     }
 
     #[test]
