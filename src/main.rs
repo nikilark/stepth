@@ -249,8 +249,8 @@ pub mod helpers {
             .for_each(|(ci, c)| {
                 c.iter_mut().enumerate().for_each(|(index, val)| {
                     let pix = &pixels[chunk_size * ci + index];
-                    let rel_pos = relative_pos(pix.position, img_size, arr_dim);
-                    *val = distance_dot_array(&pix.value, array, rel_pos, max, precision);
+                    //let rel_pos = relative_pos(pix.position, img_size, arr_dim);
+                    *val = distance_dot_array(&pix.value, array, pix.position, max, precision);
                 })
             });
         let window_size = 5;
@@ -273,7 +273,7 @@ pub mod helpers {
                     })
                     .collect();
                 let dist_len = distances.len();
-                let somes: Vec<u64> = distances[dist_len - window_size - 1..dist_len]
+                let somes: Vec<u64> = distances[dist_len - (window_size - 1)..dist_len]
                     .iter()
                     .filter_map(|v| v.and_then(|f| Some(f as u64)))
                     .collect();
@@ -284,7 +284,7 @@ pub mod helpers {
                         Some((sum / sl as u64) as u32)
                     }
                 };
-                for _ in dist_len - window_size - 1..dist_len {
+                for _ in dist_len - (window_size - 1)..dist_len {
                     temp_smoothed.push(last_val);
                 }
                 temp_smoothed
@@ -381,7 +381,7 @@ impl DepthImage<ImageBuffer<Rgb<u16>, Vec<u16>>> {
         precision: [u16; 3],
     ) -> Self {
         let (h, w) = (main_img.height(), main_img.width());
-        let (ha, wa) = (additional_img.height(), additional_img.height());
+        let (ha, wa) = (additional_img.height(), additional_img.width());
         println!("Main : ({}, {}), Sub : ({}, {})", h, w, ha, wa);
         let discrete = disage::open::rgb16(
             main_img.clone(),
@@ -402,7 +402,7 @@ impl DepthImage<ImageBuffer<Rgb<u16>, Vec<u16>>> {
             &discrete.pixels(),
             Dimensions::new(h, w),
             &disage::DiscreteImage::<u8>::pixels_to_array(&pixels, wa),
-            max,
+            max/2,
             precision,
         );
         println!("Depth");
@@ -480,17 +480,17 @@ impl DepthImage<ImageBuffer<Rgb<u16>, Vec<u16>>> {
 }
 
 fn main() {
-    let img1: ImageBuffer<Rgb<u16>, Vec<u16>> = image::io::Reader::open("inputs/main.jpg")
+    let img1: ImageBuffer<Rgb<u16>, Vec<u16>> = image::io::Reader::open("inputs/main2.jpg")
         .unwrap()
         .decode()
         .unwrap()
-        //.resize(600, 400, image::imageops::Gaussian)
+        .resize(1000, 900, image::imageops::Gaussian)
         .to_rgb16();
-    let img2: ImageBuffer<Rgb<u16>, Vec<u16>> = image::io::Reader::open("inputs/sub.jpg")
+    let img2: ImageBuffer<Rgb<u16>, Vec<u16>> = image::io::Reader::open("inputs/sub2.jpg")
         .unwrap()
         .decode()
         .unwrap()
-        .resize(1500, 1500, image::imageops::Gaussian)
+        .resize(1000, 1000, image::imageops::Gaussian)
         .to_rgb16();
     let img1 = normalize_brightness_rgb16(&img1, &img2);
     println!("Brightness");
