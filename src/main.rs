@@ -428,8 +428,7 @@ impl DepthImage<ImageBuffer<Rgb<u16>, Vec<u16>>> {
             .save("outputs/wtf.jpg")
             .unwrap();
         println!(
-            "Discrete, count : {}, compression : {}",
-            discrete.group_count(),
+            "Discrete, compression : {}",
             discrete.compression()
         );
         let max = match ha > wa {
