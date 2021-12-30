@@ -35,7 +35,7 @@ pub mod preparations {
         let sbr = sbr / img2.len() as u64;
         let diff: f64 = sbr as f64 / fbr as f64;
         let mut res = img1.clone();
-        if (1f64-diff).abs() < 0.1 {
+        if (1f64 - diff).abs() < 0.1 {
             println!("No need to change brightness");
             return res;
         }
@@ -80,7 +80,10 @@ pub mod preparations {
         }
         let diff = [rgb2[0] / rgb1[0], rgb2[1] / rgb1[1], rgb2[2] / rgb1[2]];
         let mut res = img1.clone();
-        if (1f64-diff[0]).abs() < 0.1 && (1f64-diff[1]).abs() < 0.1 && (1f64-diff[2]).abs() < 0.1 {
+        if (1f64 - diff[0]).abs() < 0.1
+            && (1f64 - diff[1]).abs() < 0.1
+            && (1f64 - diff[2]).abs() < 0.1
+        {
             println!("No need to change brightness");
             return res;
         }
@@ -198,13 +201,16 @@ pub mod helpers {
         };
         let mut distances: Vec<Option<u32>> = vec![None; pixels.len()];
         let chunk_size = 1 + pixels.len() / 20;
-        distances.par_chunks_mut(chunk_size).enumerate().for_each(|(ci,c)| {
-            c.iter_mut().enumerate().for_each(|(index, val)| {
-                let pix = &pixels[chunk_size * ci + index];
-                let rel_pos = relative_pos(pix.position, img_size, arr_dim);
-                *val = distance_dot_array(&pix.value, array, rel_pos, max, precision);
-            })
-        });
+        distances
+            .par_chunks_mut(chunk_size)
+            .enumerate()
+            .for_each(|(ci, c)| {
+                c.iter_mut().enumerate().for_each(|(index, val)| {
+                    let pix = &pixels[chunk_size * ci + index];
+                    let rel_pos = relative_pos(pix.position, img_size, arr_dim);
+                    *val = distance_dot_array(&pix.value, array, rel_pos, max, precision);
+                })
+            });
         pixels
             .to_vec()
             .into_iter()
@@ -300,30 +306,87 @@ pub mod helpers {
         let min_dim = if h < w { h } else { w };
         let arr_clone = array.clone();
         let chunk_size = 1 + h / 20;
-        array.par_chunks_mut(chunk_size).enumerate().for_each(|(ci,c),| {
-            c.iter_mut().enumerate().for_each(|(y, v)| {
-                let y = chunk_size * ci + y;
-                v.iter_mut().enumerate().for_each(|(x, f)| {
-                    if f.is_some() {
-                        return;
-                    }
-                    for i in 1..min_dim {
-                        let mut neighbours: Vec<u32> =
-                            helpers::neighbours(Position::new(x as u32, y as u32), &arr_clone, i)
-                                .into_iter()
-                                .filter_map(|f| f)
-                                .collect();
-                        if neighbours.len() == 0 {
-                            continue;
+        array
+            .par_chunks_mut(chunk_size)
+            .enumerate()
+            .for_each(|(ci, c)| {
+                c.iter_mut().enumerate().for_each(|(y, v)| {
+                    let y = chunk_size * ci + y;
+                    v.iter_mut().enumerate().for_each(|(x, f)| {
+                        if f.is_some() {
+                            return;
                         }
-                        neighbours.sort();
-                        let l = neighbours.len();
-                        *f = neighbours.get((l - 1) / 2).and_then(|f| Some(f.clone()));
-                        return;
-                    }
+                        for i in 1..min_dim {
+                            let mut neighbours: Vec<u32> = helpers::neighbours(
+                                Position::new(x as u32, y as u32),
+                                &arr_clone,
+                                i,
+                            )
+                            .into_iter()
+                            .filter_map(|f| f)
+                            .collect();
+                            if neighbours.len() == 0 {
+                                continue;
+                            }
+                            neighbours.sort();
+                            let l = neighbours.len();
+                            *f = neighbours.get((l - 1) / 2).and_then(|f| Some(f.clone()));
+                            return;
+                        }
+                    })
+                })
+            });
+    }
+
+    pub fn broaden_depth(depth: &Vec<Vec<u32>>) -> Vec<Vec<u32>> {
+        let min = depth
+            .iter()
+            .map(|f| f.iter().min().unwrap_or(&0))
+            .min()
+            .unwrap_or(&0)
+            .clone();
+        let max = depth
+            .iter()
+            .map(|f| f.iter().max().unwrap_or(&u32::MAX))
+            .max()
+            .unwrap_or(&u32::MAX)
+            .clone();
+        let delta = (max - min) as f64;
+        let chunk_size = depth.len() / 20;
+        let mut res = depth.clone();
+        res.par_chunks_mut(1 + chunk_size).for_each(|c| {
+            c.iter_mut().for_each(|op| {
+                op.iter_mut().for_each(|v| {
+                    *v = (((v.clone() - min) as f64 / delta) * u32::MAX as f64) as u32
                 })
             })
         });
+        res
+    }
+
+    pub fn smooth_depth(depth: &Vec<Vec<u32>>, kernel: usize) -> Vec<Vec<u32>> {
+        let mut res = depth.clone();
+        let chunk_size = 1 + depth.len() / 20;
+        res.par_chunks_mut(chunk_size)
+            .enumerate()
+            .for_each(|(ci, c)| {
+                c.iter_mut().enumerate().for_each(|(y, r)| {
+                    let y = y + ci * chunk_size;
+                    r.iter_mut().enumerate().for_each(|(x, v)| {
+                        let mut neighbrs = Vec::new();
+                        for k in 0..kernel + 1 {
+                            neighbrs.append(&mut neighbours(
+                                Position::new(x as u32, y as u32),
+                                &depth,
+                                k,
+                            ));
+                        }
+                        neighbrs.sort();
+                        *v = neighbrs[(neighbrs.len() - 1) / 2];
+                    })
+                })
+            });
+        res
     }
 }
 
@@ -376,7 +439,7 @@ impl DepthImage<ImageBuffer<Rgb<u16>, Vec<u16>>> {
         let pixels: Vec<Rgb<u16>> = additional_img.pixels().map(|f| f.clone()).collect();
         let dpix = helpers::distance_discrete_pixels(
             &discrete.pixels(),
-            Dimensions::new(ha, wa),
+            Dimensions::new(h, w),
             &disage::DiscreteImage::<u8>::pixels_to_array(&pixels, wa),
             max,
             precision,
@@ -446,30 +509,20 @@ impl DepthImage<ImageBuffer<Rgb<u16>, Vec<u16>>> {
         })
     }
 
-    pub fn broaden_depth(&mut self) {
-        let min = self
-            .depth
-            .iter()
-            .map(|f| f.iter().min().unwrap_or(&0))
-            .min()
-            .unwrap_or(&0)
-            .clone();
-        let max = self
-            .depth
-            .iter()
-            .map(|f| f.iter().max().unwrap_or(&u32::MAX))
-            .max()
-            .unwrap_or(&u32::MAX)
-            .clone();
-        let delta = (max - min) as f64;
-        let chunk_size = self.depth.len() / 20;
-        self.depth.par_chunks_mut( 1 + chunk_size).for_each(|c| {
-            c.iter_mut().for_each(|op| {
-                op.iter_mut().for_each(|v| {
-                    *v = (((v.clone() - min) as f64 / delta) * u32::MAX as f64) as u32
-                })
-            })
-        });
+    pub fn broaden_depth(&self) -> Self {
+        println!("Broading");
+        DepthImage {
+            depth: helpers::broaden_depth(&self.depth),
+            pixels: self.pixels.clone(),
+        }
+    }
+
+    pub fn smooth_depth(&self, kernel: usize) -> Self {
+        println!("Smoothing with kernel {}", kernel);
+        DepthImage {
+            depth: helpers::smooth_depth(&self.depth, kernel),
+            pixels: self.pixels.clone(),
+        }
     }
 }
 
@@ -495,12 +548,13 @@ fn main() {
     );
     println!("Started creating...");
 
-    let mut di =
-        DepthImage::from_rgb16_relative(&img1, &img2, [600u16, 600, 600], [500u16, 500, 500]);
+    let di = DepthImage::from_rgb16_relative(&img1, &img2, [600u16, 600, 600], [500u16, 500, 500]);
     println!("Created");
-    di.broaden_depth();
-    println!("Broaded");
-    di.depth_image().save("outputs/map.jpg").unwrap();
+    di.smooth_depth((img1.height() / 20) as usize)
+        .broaden_depth()
+        .depth_image()
+        .save("outputs/map.jpg")
+        .unwrap();
     println!("Hello, world!");
 }
 
