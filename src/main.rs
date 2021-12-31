@@ -228,6 +228,38 @@ pub mod helpers {
         None
     }
 
+    pub fn smooth_depth(depth: &Vec<Option<u32>>, kernel: usize) -> Vec<Option<u32>> {
+        let mut res = depth.clone();
+        let len = depth.len();
+        let chunk_size = 1 + len / 20;
+        res.par_chunks_mut(chunk_size)
+            .enumerate()
+            .for_each(|(chunk_index, chunk)| {
+                chunk.iter_mut().enumerate().for_each(|(index, v)| {
+                    let final_index = chunk_index * chunk_size + index;
+                    let window: &[Option<u32>] = match (
+                        final_index > kernel / 2,
+                        len as i64 - final_index as i64 > (kernel / 2) as i64,
+                    ) {
+                        (true, true) => &depth[final_index - kernel / 2..final_index + kernel / 2],
+                        (false, true) => &depth[0..chunk_size.max(len)],
+                        (true, false) => {
+                            &depth[(0i64.max(final_index as i64 - kernel as i64)) as usize..len]
+                        }
+                        (false, false) => &depth[0..len],
+                    };
+                    let somes: Vec<u64> = window
+                        .iter()
+                        .filter_map(|v| v.and_then(|f| Some(f as u64)))
+                        .collect();
+                    if somes.len() == 0 {
+                        *v = Some((somes.iter().sum::<u64>() / somes.len() as u64) as u32);
+                    }
+                })
+            });
+        res
+    }
+
     pub fn distance_discrete_pixels<
         T: Clone + Copy + std::marker::Sync + disage::PixelOpps<T> + std::marker::Send + Debug,
     >(
@@ -249,53 +281,14 @@ pub mod helpers {
             .for_each(|(ci, c)| {
                 c.iter_mut().enumerate().for_each(|(index, val)| {
                     let pix = &pixels[chunk_size * ci + index];
-                    //let rel_pos = relative_pos(pix.position, img_size, arr_dim);
-                    *val = distance_dot_array(&pix.value, array, pix.position, max, precision);
+                    let rel_pos = relative_pos(pix.position, img_size, arr_dim);
+                    *val = distance_dot_array(&pix.value, array, rel_pos, max, precision);
                 })
             });
-        let window_size = 5;
-        let smoothed: Vec<Option<u32>> = match distances.len() > window_size {
-            true => {
-                let mut temp_smoothed: Vec<Option<u32>> = distances
-                    .windows(window_size)
-                    .map(|w| {
-                        let somes: Vec<u64> = w
-                            .iter()
-                            .filter_map(|v| v.and_then(|f| Some(f as u64)))
-                            .collect();
-                        match somes.len() {
-                            0 => None,
-                            sl => {
-                                let sum: u64 = somes.iter().sum();
-                                Some((sum / sl as u64) as u32)
-                            }
-                        }
-                    })
-                    .collect();
-                let dist_len = distances.len();
-                let somes: Vec<u64> = distances[dist_len - (window_size - 1)..dist_len]
-                    .iter()
-                    .filter_map(|v| v.and_then(|f| Some(f as u64)))
-                    .collect();
-                let last_val = match somes.len() {
-                    0 => None,
-                    sl => {
-                        let sum: u64 = somes.iter().sum();
-                        Some((sum / sl as u64) as u32)
-                    }
-                };
-                for _ in dist_len - (window_size - 1)..dist_len {
-                    temp_smoothed.push(last_val);
-                }
-                temp_smoothed
-            }
-            false => distances.clone(),
-        };
-        assert_eq!(smoothed.len(), distances.len());
         pixels
             .to_vec()
             .into_iter()
-            .zip(smoothed.into_iter())
+            .zip(smooth_depth(&distances, 6).into_iter())
             .collect()
     }
 
@@ -402,7 +395,7 @@ impl DepthImage<ImageBuffer<Rgb<u16>, Vec<u16>>> {
             &discrete.pixels(),
             Dimensions::new(h, w),
             &disage::DiscreteImage::<u8>::pixels_to_array(&pixels, wa),
-            max/2,
+            max / 2,
             precision,
         );
         println!("Depth");
