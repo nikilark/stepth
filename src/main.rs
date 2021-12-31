@@ -4,7 +4,7 @@ use disage::{self, Dimensions, DiscreteImage, DiscretePixel, Position};
 use image::{self, ImageBuffer, Luma, Pixel, Rgb};
 use preparations::*;
 use rayon::prelude::*;
-
+use std::time::Instant;
 use crate::helpers::precision_rgb16;
 
 type DPixelDis<T> = (DiscretePixel<T>, Option<u32>);
@@ -252,7 +252,7 @@ pub mod helpers {
                         .iter()
                         .filter_map(|v| v.and_then(|f| Some(f as u64)))
                         .collect();
-                    if somes.len() == 0 {
+                    if somes.len() != 0 {
                         *v = Some((somes.iter().sum::<u64>() / somes.len() as u64) as u32);
                     }
                 })
@@ -275,6 +275,7 @@ pub mod helpers {
         };
         let mut distances: Vec<Option<u32>> = vec![None; pixels.len()];
         let chunk_size = 1 + pixels.len() / 20;
+        let now = Instant::now();
         distances
             .par_chunks_mut(chunk_size)
             .enumerate()
@@ -285,10 +286,14 @@ pub mod helpers {
                     *val = distance_dot_array(&pix.value, array, rel_pos, max, precision);
                 })
             });
+        println!("Found distances, elapsed : {}", now.elapsed().as_secs_f32());
+        let now = Instant::now();
+        let smoothed = smooth_depth(&distances, 6); 
+        println!("Smoothed, elapsed : {}", now.elapsed().as_secs_f32());
         pixels
             .to_vec()
             .into_iter()
-            .zip(smooth_depth(&distances, 6).into_iter())
+            .zip(smoothed.into_iter())
             .collect()
     }
 
@@ -395,7 +400,7 @@ impl DepthImage<ImageBuffer<Rgb<u16>, Vec<u16>>> {
             &discrete.pixels(),
             Dimensions::new(h, w),
             &disage::DiscreteImage::<u8>::pixels_to_array(&pixels, wa),
-            max / 2,
+            max / 20,
             precision,
         );
         println!("Depth");
@@ -473,17 +478,17 @@ impl DepthImage<ImageBuffer<Rgb<u16>, Vec<u16>>> {
 }
 
 fn main() {
-    let img1: ImageBuffer<Rgb<u16>, Vec<u16>> = image::io::Reader::open("inputs/main2.jpg")
+    let img1: ImageBuffer<Rgb<u16>, Vec<u16>> = image::io::Reader::open("inputs/main.jpg")
         .unwrap()
         .decode()
         .unwrap()
-        .resize(1000, 900, image::imageops::Gaussian)
+        //.resize(1000, 900, image::imageops::Gaussian)
         .to_rgb16();
-    let img2: ImageBuffer<Rgb<u16>, Vec<u16>> = image::io::Reader::open("inputs/sub2.jpg")
+    let img2: ImageBuffer<Rgb<u16>, Vec<u16>> = image::io::Reader::open("inputs/sub.jpg")
         .unwrap()
         .decode()
         .unwrap()
-        .resize(1000, 1000, image::imageops::Gaussian)
+        //.resize(1000, 1000, image::imageops::Gaussian)
         .to_rgb16();
     let img1 = normalize_brightness_rgb16(&img1, &img2);
     println!("Brightness");
@@ -497,8 +502,9 @@ fn main() {
     println!("Started creating...");
     let precision = precision_rgb16(&img1, 0.7);
     println!("Precision : {:?}", precision);
+    let now = Instant::now();
     let di = DepthImage::from_rgb16_relative(&img1, &img2, precision.clone());
-    println!("Created");
+    println!("Created, elapsed : {}", now.elapsed().as_secs_f32());
     di.broaden_depth()
         .depth_image()
         .save("outputs/map.jpg")
