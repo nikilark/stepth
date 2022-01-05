@@ -6,6 +6,7 @@ use preparations::*;
 use rayon::prelude::*;
 use std::time::Instant;
 use crate::helpers::precision_rgb16;
+use indicatif;
 
 type DPixelDis<T> = (DiscretePixel<T>, Option<u32>);
 
@@ -195,10 +196,12 @@ pub mod helpers {
                             found = true;
 
                             if v.clone().substract(what.clone()).lt(presition.clone()) {
-                                return Some(distance_dot_dot(
+                                let dist = distance_dot_dot(
                                     from,
                                     Position::new(j as u32, i as u32),
-                                ));
+                                );
+                                //println!("Found : this = {:?}, eq = {:?}, dist = {}", v, what, dist);
+                                return Some(dist);
                             }
                         }
                         None => continue,
@@ -211,10 +214,12 @@ pub mod helpers {
                         Some(v) => {
                             found = true;
                             if v.clone().substract(what.clone()).lt(presition.clone()) {
-                                return Some(distance_dot_dot(
+                                let dist = distance_dot_dot(
                                     from,
                                     Position::new(j as u32, i as u32),
-                                ));
+                                );
+                                //println!("Found : this = {:?}, eq = {:?}, dist = {}", v, what, dist);
+                                return Some(dist);
                             }
                         }
                         None => continue,
@@ -231,7 +236,7 @@ pub mod helpers {
     pub fn smooth_depth(depth: &Vec<Option<u32>>, kernel: usize) -> Vec<Option<u32>> {
         let mut res = depth.clone();
         let len = depth.len();
-        let chunk_size = 1 + len / 20;
+        let chunk_size = 1 + len / 8;
         res.par_chunks_mut(chunk_size)
             .enumerate()
             .for_each(|(chunk_index, chunk)| {
@@ -274,21 +279,33 @@ pub mod helpers {
             width: array[0].len() as u32,
         };
         let mut distances: Vec<Option<u32>> = vec![None; pixels.len()];
-        let chunk_size = 1 + pixels.len() / 20;
+        let chunk_size = 1 + pixels.len() / 8;
+        let last_chunk = distances.len() / chunk_size;
         let now = Instant::now();
         distances
             .par_chunks_mut(chunk_size)
             .enumerate()
             .for_each(|(ci, c)| {
-                c.iter_mut().enumerate().for_each(|(index, val)| {
-                    let pix = &pixels[chunk_size * ci + index];
-                    let rel_pos = relative_pos(pix.position, img_size, arr_dim);
-                    *val = distance_dot_array(&pix.value, array, rel_pos, max, precision);
-                })
+                if ci == last_chunk {
+                    let bar = indicatif::ProgressBar::new(c.len() as u64);
+                    c.iter_mut().enumerate().for_each(|(index, val)| {
+                        let pix = &pixels[chunk_size * ci + index];
+                        let rel_pos = relative_pos(pix.position, img_size, arr_dim);
+                        *val = distance_dot_array(&pix.value, array, rel_pos, max, precision);
+                        bar.inc(1);
+                    })
+                }
+                else{
+                    c.iter_mut().enumerate().for_each(|(index, val)| {
+                        let pix = &pixels[chunk_size * ci + index];
+                        let rel_pos = relative_pos(pix.position, img_size, arr_dim);
+                        *val = distance_dot_array(&pix.value, array, rel_pos, max, precision);
+                    })
+                }
             });
         println!("Found distances, elapsed : {}", now.elapsed().as_secs_f32());
         let now = Instant::now();
-        let smoothed = smooth_depth(&distances, 6); 
+        let smoothed = smooth_depth(&distances, 5);
         println!("Smoothed, elapsed : {}", now.elapsed().as_secs_f32());
         pixels
             .to_vec()
@@ -342,7 +359,7 @@ pub mod helpers {
             .unwrap_or(&u32::MAX)
             .clone();
         let delta = (max - min) as f64;
-        let chunk_size = depth.len() / 20;
+        let chunk_size = depth.len() / 8;
         let mut res = depth.clone();
         res.par_chunks_mut(1 + chunk_size).for_each(|c| {
             c.iter_mut().for_each(|op| {
@@ -380,17 +397,12 @@ impl DepthImage<ImageBuffer<Rgb<u16>, Vec<u16>>> {
     ) -> Self {
         let (h, w) = (main_img.height(), main_img.width());
         let (ha, wa) = (additional_img.height(), additional_img.width());
-        println!("Main : ({}, {}), Sub : ({}, {})", h, w, ha, wa);
         let discrete = disage::open::rgb16(
             main_img.clone(),
-            precision,
+            precision.clone(),
             disage::hashers::MedianBrightnessHasher {},
             18,
         );
-        disage::converters::to_rgb8_from16(&discrete.clone().collect(Some([0u16, 0, 0])))
-            .save("outputs/wtf2.jpg")
-            .unwrap();
-        println!("Discrete, compression : {}", discrete.compression());
         let max = match ha > wa {
             true => ha,
             _ => wa,
@@ -403,11 +415,10 @@ impl DepthImage<ImageBuffer<Rgb<u16>, Vec<u16>>> {
             max / 20,
             precision,
         );
-        println!("Depth");
         DepthImage {
             depth: helpers::replace_none_with(
                 &helpers::depthp_to_array(&dpix, Dimensions::new(h, w)),
-                0,
+                u32::MIN,
             ),
             pixels: main_img.clone(),
         }
@@ -478,29 +489,21 @@ impl DepthImage<ImageBuffer<Rgb<u16>, Vec<u16>>> {
 }
 
 fn main() {
-    let img1: ImageBuffer<Rgb<u16>, Vec<u16>> = image::io::Reader::open("inputs/main.jpg")
+    let img1: ImageBuffer<Rgb<u16>, Vec<u16>> = image::io::Reader::open("inputs/main2.jpg")
         .unwrap()
         .decode()
         .unwrap()
         //.resize(1000, 900, image::imageops::Gaussian)
         .to_rgb16();
-    let img2: ImageBuffer<Rgb<u16>, Vec<u16>> = image::io::Reader::open("inputs/sub.jpg")
+    let img2: ImageBuffer<Rgb<u16>, Vec<u16>> = image::io::Reader::open("inputs/sub2.jpg")
         .unwrap()
         .decode()
         .unwrap()
         //.resize(1000, 1000, image::imageops::Gaussian)
         .to_rgb16();
     let img1 = normalize_brightness_rgb16(&img1, &img2);
-    println!("Brightness");
-    println!(
-        "Main : ({}, {}), Sub : ({}, {})",
-        img1.height(),
-        img1.width(),
-        img2.height(),
-        img2.width()
-    );
     println!("Started creating...");
-    let precision = precision_rgb16(&img1, 0.7);
+    let precision = precision_rgb16(&img1, 0.8);
     println!("Precision : {:?}", precision);
     let now = Instant::now();
     let di = DepthImage::from_rgb16_relative(&img1, &img2, precision.clone());
