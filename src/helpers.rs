@@ -1,6 +1,6 @@
 use std::cmp::Ordering;
 use std::fmt::Debug;
-use disage::PixelOpps;
+use disage::pixels::PixelOpps;
 type DPixelDis<T> = (DiscretePixel<T>, Option<u32>);
 use super::*;
 use rayon::prelude::*;
@@ -58,7 +58,7 @@ pub fn distance_dot_dot(f: Position, s: Position) -> u32 {
     (((x1 - x2).pow(2) + (y1 - y2).pow(2)) as f64).sqrt() as u32
 }
 
-pub fn distance_dot_array<T: Clone + disage::PixelOpps<T> + Debug>(
+pub fn distance_dot_array<T: Clone + PixelOpps<T> + Debug>(
     what: &T,
     array: &Vec<Vec<T>>,
     from: Position,
@@ -148,7 +148,7 @@ pub fn smooth_depth(depth: &Vec<Option<u32>>, kernel: usize) -> Vec<Option<u32>>
 }
 
 pub fn distance_discrete_pixels<
-    T: Clone + Copy + std::marker::Sync + disage::PixelOpps<T> + std::marker::Send + Debug,
+    T: Clone + Copy + std::marker::Sync + PixelOpps<T> + std::marker::Send + Debug,
 >(
     pixels: &Vec<DiscretePixel<T>>,
     img_size: Dimensions,
