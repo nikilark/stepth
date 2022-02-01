@@ -1,34 +1,29 @@
-use std::cmp::Ordering;
-use std::fmt::Debug;
 use disage::pixels::PixelOpps;
+use std::fmt::Debug;
 type DPixelDis<T> = (DiscretePixel<T>, Option<u32>);
 use super::*;
 use rayon::prelude::*;
 
 pub fn precision_rgb16(img: &ImageBuffer<Rgb<u16>, Vec<u16>>, percent: f32) -> [u16; 3] {
-    if percent < 0.0 || percent > 1.0 {
-        println!("Wrong percent value : {}, should be in [0.0, 1.0]", percent);
+    if percent < 0.0 || percent > 2.0 {
+        println!("Wrong percent value : {}, should be in [0.0, 2.0]", percent);
         return [0, 0, 0];
     }
+    let mut sum = [0u64, 0, 0];
     let mut previous = img.get_pixel(0, 0).clone().0;
-    let mut diffs: Vec<[u16; 3]> = img
-        .pixels()
-        .map(|f| {
-            let d = f.0.substract(previous.clone());
-            previous = f.0.clone();
-            d
-        })
-        .collect();
-    diffs.sort_by(|a, b| {
-        if a == b {
-            return Ordering::Equal;
-        }
-        if a.lt(b) {
-            return Ordering::Less;
-        }
-        return a.cmp(b);
+    img.pixels().for_each(|f| {
+        let d = f.0.substract(previous.clone());
+        previous = f.0.clone();
+        sum[0] += d[0] as u64;
+        sum[1] += d[1] as u64;
+        sum[2] += d[2] as u64;
     });
-    diffs[(diffs.len() as f32 * percent) as usize].clone()
+    let elements = img.width() as u64 * img.height() as u64;
+    [
+        ((sum[0] / elements) as f32 * percent) as u16,
+        ((sum[1] / elements) as f32 * percent) as u16,
+        ((sum[2] / elements) as f32 * percent) as u16,
+    ]
 }
 
 pub fn precision_luma16(img: &ImageBuffer<Luma<u16>, Vec<u16>>, percent: f32) -> u16 {
@@ -75,37 +70,32 @@ pub fn distance_dot_array<T: Clone + PixelOpps<T> + Debug>(
         },
         None => None,
     };
-    for i in 0..max as i64 {
+    let min_distance = ((array.len() + array[0].len()) / 400) as u32; // 0.5 percent
+    for current_step in 0..max as i64 {
         let mut found = false;
-        for i in [y - i, y + i] {
-            for j in x - i..x + i + 1 {
-                match get2d(&array, i, j) {
-                    Some(v) => {
-                        found = true;
-
-                        if v.clone().substract(what.clone()).lt(presition.clone()) {
-                            let dist = distance_dot_dot(from, Position::new(j as u32, i as u32));
-                            //println!("Found : this = {:?}, eq = {:?}, dist = {}", v, what, dist);
-                            return Some(dist);
+        let neighbours = [
+            (y + current_step, x),
+            (y - current_step, x),
+            (y, x + current_step),
+            (y, x - current_step),
+            (y + current_step, x + current_step),
+            (y + current_step, x - current_step),
+            (y - current_step, x + current_step),
+            (y - current_step, x - current_step),
+        ];
+        for (y, x) in neighbours {
+            match get2d(&array, y, x) {
+                Some(v) => {
+                    found = true;
+                    if v.clone().substract(what.clone()).lt(presition.clone()) {
+                        let distance = distance_dot_dot(from, Position::new(x as u32, y as u32));
+                        if distance < min_distance {
+                            return None;
                         }
+                        return Some(distance);
                     }
-                    None => continue,
                 }
-            }
-        }
-        for j in [x - i, x + i] {
-            for i in y - i..y + i + 1 {
-                match get2d(&array, i, j) {
-                    Some(v) => {
-                        found = true;
-                        if v.clone().substract(what.clone()).lt(presition.clone()) {
-                            let dist = distance_dot_dot(from, Position::new(j as u32, i as u32));
-                            //println!("Found : this = {:?}, eq = {:?}, dist = {}", v, what, dist);
-                            return Some(dist);
-                        }
-                    }
-                    None => continue,
-                }
+                None => continue,
             }
         }
         if !found {
@@ -117,30 +107,37 @@ pub fn distance_dot_array<T: Clone + PixelOpps<T> + Debug>(
 
 pub fn smooth_depth(depth: &Vec<Option<u32>>, kernel: usize) -> Vec<Option<u32>> {
     let mut res = depth.clone();
+    if kernel < 3 {
+        return res;
+    }
     let len = depth.len();
     let chunk_size = 1 + len / 8;
     res.par_chunks_mut(chunk_size)
         .enumerate()
         .for_each(|(chunk_index, chunk)| {
-            chunk.iter_mut().enumerate().for_each(|(index, v)| {
+            chunk.iter_mut().enumerate().for_each(|(index, depth_pix)| {
                 let final_index = chunk_index * chunk_size + index;
                 let window: &[Option<u32>] = match (
                     final_index > kernel / 2,
                     len as i64 - final_index as i64 > (kernel / 2) as i64,
                 ) {
                     (true, true) => &depth[final_index - kernel / 2..final_index + kernel / 2],
-                    (false, true) => &depth[0..chunk_size.max(len)],
+                    (false, true) => &depth[0..(final_index + kernel).min(len)],
                     (true, false) => {
                         &depth[(0i64.max(final_index as i64 - kernel as i64)) as usize..len]
                     }
                     (false, false) => &depth[0..len],
                 };
-                let somes: Vec<u64> = window
+                let mut somes: Vec<u64> = window
                     .iter()
                     .filter_map(|v| v.and_then(|f| Some(f as u64)))
                     .collect();
-                if somes.len() != 0 {
-                    *v = Some((somes.iter().sum::<u64>() / somes.len() as u64) as u32);
+                match somes.len() {
+                    0|1 => *depth_pix = None,
+                    _ => {
+                        somes.sort();
+                        *depth_pix = Some(somes[somes.len() / 2] as u32);
+                    }
                 }
             })
         });
@@ -155,7 +152,7 @@ pub fn distance_discrete_pixels<
     array: &Vec<Vec<T>>,
     max: u32,
     precision: T,
-    smoothing : usize,
+    smoothing: usize,
 ) -> Vec<DPixelDis<T>> {
     let arr_dim = Dimensions {
         height: array.len() as u32,
@@ -248,6 +245,16 @@ pub fn broaden_depth(depth: &Vec<Vec<u32>>) -> Vec<Vec<u32>> {
             op.iter_mut()
                 .for_each(|v| *v = (((v.clone() - min) as f64 / delta) * u32::MAX as f64) as u32)
         })
+    });
+    res
+}
+
+pub fn invert_depth(depth: &Vec<Vec<u32>>) -> Vec<Vec<u32>> {
+    let chunk_size = depth.len() / 8;
+    let mut res = depth.clone();
+    res.par_chunks_mut(1 + chunk_size).for_each(|c| {
+        c.iter_mut()
+            .for_each(|op| op.iter_mut().for_each(|v| *v = u32::MAX - *v))
     });
     res
 }
