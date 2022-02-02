@@ -70,32 +70,27 @@ pub fn distance_dot_array<T: Clone + PixelOpps<T> + Debug>(
         },
         None => None,
     };
-    let min_distance = ((array.len() + array[0].len()) / 400) as u32; // 0.5 percent
     for current_step in 0..max as i64 {
         let mut found = false;
-        let neighbours = [
-            (y + current_step, x),
-            (y - current_step, x),
-            (y, x + current_step),
-            (y, x - current_step),
-            (y + current_step, x + current_step),
-            (y + current_step, x - current_step),
-            (y - current_step, x + current_step),
-            (y - current_step, x - current_step),
-        ];
-        for (y, x) in neighbours {
-            match get2d(&array, y, x) {
-                Some(v) => {
-                    found = true;
-                    if v.clone().substract(what.clone()).lt(presition.clone()) {
-                        let distance = distance_dot_dot(from, Position::new(x as u32, y as u32));
-                        if distance < min_distance {
-                            return None;
+        for (main, sub, order) in [(y,x,true),(x,y,false)]
+        {
+            for i in [main+current_step, main-current_step]
+            {
+                for j in sub-current_step..sub+current_step+1
+                {
+                    let (point_y, point_x) = if order {(i,j)} else {(j,i)};
+                    match get2d(&array, point_y, point_x)
+                    {
+                        Some(v) => {
+                            found = true;
+                            if v.clone().substract(what.clone()).lt(presition.clone()) {
+                                let distance = distance_dot_dot(from, Position::new(point_x as u32, point_y as u32));
+                                return Some(distance);
+                            }
                         }
-                        return Some(distance);
+                        None => continue,
                     }
                 }
-                None => continue,
             }
         }
         if !found {
