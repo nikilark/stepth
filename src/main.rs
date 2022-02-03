@@ -30,7 +30,7 @@ fn main() {
     let checker = depth_hasher::DepthChecker{precision : 20u32};
     let discrete = disage::discrete_image::DiscreteImage::new(raw_pixels,hasher,img1.width(),checker,15,20);
     println!("Created, elapsed : {}", now.elapsed().as_secs_f32());
-    disage::converters::to_luma8_from32(&helpers::broaden_depth(&discrete.collect(None)))
+    disage::converters::to_luma8_from32(&helpers::broaden_depth(&discrete.collect()))
         .save("outputs/map_weird.jpg")
         .unwrap();
     println!("Hello, world!");
