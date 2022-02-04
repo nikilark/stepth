@@ -2,7 +2,7 @@ use image::ImageBuffer;
 
 use crate::depth_hasher;
 
-pub fn lume_depth<
+pub fn luma_depth<
     P: image::Primitive
         + 'static
         + disage::pixels::PixelOpps<P>
