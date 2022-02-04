@@ -7,6 +7,6 @@ edition = "2021"
 
 [dependencies]
 disage = {path = "../disage"}
-image = "*"
+image = "0.23.0"
 rayon = "*"
 indicatif = "*"

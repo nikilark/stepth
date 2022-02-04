@@ -1,5 +1,3 @@
-use std::fmt::Debug;
-
 use super::{disage, helpers, image};
 
 pub struct DepthHasher<T: disage::pixels::PixelOpps<T>> {
@@ -9,15 +7,18 @@ pub struct DepthHasher<T: disage::pixels::PixelOpps<T>> {
     precision: T,
 }
 
-impl DepthHasher<[u16; 3]> {
-    pub fn from_rgb16(
-        add_img: &image::ImageBuffer<image::Rgb<u16>, Vec<u16>>,
+impl<P: image::Primitive + 'static> DepthHasher<[P; 3]>
+where
+    [P; 3]: disage::pixels::PixelOpps<[P; 3]>,
+{
+    pub fn from_rgb(
+        add_img: &image::ImageBuffer<image::Rgb<P>, Vec<P>>,
         main_img_size: disage::Dimensions,
-        precision: [u16; 3],
+        precision: [P; 3],
     ) -> Self {
         DepthHasher {
             additional_img: disage::converters::pixels_to_array(
-                &disage::converters::raw_rgb(&add_img),
+                &disage::converters::raw_rgb(add_img),
                 add_img.width(),
             ),
             add_img_size: disage::Dimensions::new(add_img.height(), add_img.width()),
@@ -27,11 +28,11 @@ impl DepthHasher<[u16; 3]> {
     }
 }
 
-impl DepthHasher<u16> {
-    pub fn from_luma16(
-        add_img: &image::ImageBuffer<image::Luma<u16>, Vec<u16>>,
+impl<P: image::Primitive + 'static + disage::pixels::PixelOpps<P>> DepthHasher<P> {
+    pub fn from_luma(
+        add_img: &image::ImageBuffer<image::Luma<P>, Vec<P>>,
         main_img_size: disage::Dimensions,
-        precision: u16,
+        precision: P,
     ) -> Self {
         DepthHasher {
             additional_img: disage::converters::pixels_to_array(
@@ -45,7 +46,7 @@ impl DepthHasher<u16> {
     }
 }
 
-impl<P: disage::pixels::PixelOpps<P> + Clone + Debug> disage::hashers::PixelHasher<P, u32>
+impl<P: disage::pixels::PixelOpps<P> + Clone> disage::hashers::PixelHasher<P, u32>
     for DepthHasher<P>
 {
     fn hash(&self, data: &[Vec<P>], position: disage::Position, _size: disage::Dimensions) -> u32 {
