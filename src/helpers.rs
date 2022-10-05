@@ -23,8 +23,8 @@ pub fn distance_dot_array<T: Clone + PixelOpps<T>>(
     array: &Vec<Vec<T>>,
     from: Position,
     max: u32,
-    presition: T,
-) -> Option<u32> {
+    precision: T,
+) -> Option<(u32, Position)> {
     let (x, y): (u32, u32) = from.tuplexy();
     let x = x as i64;
     let y = y as i64;
@@ -36,20 +36,21 @@ pub fn distance_dot_array<T: Clone + PixelOpps<T>>(
         None => None,
     };
     for current_step in 0..max as i64 {
-        let mut found = false;
+        let mut still_in_bounds = false;
         for (main, sub, order) in [(y, x, true), (x, y, false)] {
             for i in [main + current_step, main - current_step] {
                 for j in sub - current_step..sub + current_step + 1 {
                     let (point_y, point_x) = if order { (i, j) } else { (j, i) };
                     match get2d(&array, point_y, point_x) {
                         Some(v) => {
-                            found = true;
-                            if v.clone().substract(what.clone()).lt(presition.clone()) {
+                            still_in_bounds = true;
+                            if v.clone().substract(what.clone()).lt(precision.clone()) {
+                                let pos = Position::new(point_x as u32, point_y as u32);
                                 let distance = distance_dot_dot(
                                     from,
-                                    Position::new(point_x as u32, point_y as u32),
+                                    pos
                                 );
-                                return Some(distance);
+                                return Some((distance, pos));
                             }
                         }
                         None => continue,
@@ -57,7 +58,7 @@ pub fn distance_dot_array<T: Clone + PixelOpps<T>>(
                 }
             }
         }
-        if !found {
+        if !still_in_bounds {
             break;
         }
     }

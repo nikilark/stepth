@@ -29,10 +29,6 @@ impl MaskImage {
                 .to_luma8();
             return Ok(());
         }
-        Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "Unknown error",
-        ))
     }
 
     pub fn load_mask_from_file(&mut self, mask_path: &str) -> Result<(), std::io::Error> {

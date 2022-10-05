@@ -1,4 +1,7 @@
-use crate::mask_image::*;
+use crate::{
+    helpers::{self, distance_dot_dot},
+    mask_image::*,
+};
 use image::{DynamicImage, ImageBuffer, Luma};
 use std::collections::HashMap;
 
@@ -38,6 +41,86 @@ impl DepthImage {
             ));
         }
         self.load_depth(depth_image.unwrap().to_luma8())
+    }
+
+    pub fn load_depth_from_additional(&mut self, add_path: &str) -> Result<(), std::io::Error> {
+        let add_image = image::open(add_path);
+        if add_image.is_err() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Failed to open image",
+            ));
+        }
+        let add_image = add_image.unwrap().to_rgb8();
+        if add_image.width() != self.width() || add_image.height() != self.height() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Sizes don't match",
+            ));
+        }
+        let precision = [5u8; 3];
+        let mut discr_main = disage::open::rgb_discrete(
+            &image::DynamicImage::ImageRgba8(self.image.clone()).to_rgb8(),
+            disage::hashers::MeanBrightnessHasher {},
+            disage::checkers::BrightnessChecker { precision },
+            (10, 16),
+        );
+        let discr_add = disage::open::rgb_discrete(
+            &add_image,
+            disage::hashers::MeanBrightnessHasher {},
+            disage::checkers::BrightnessChecker { precision },
+            (10, 16),
+        );
+        let add_array = discr_add.clone().collect();
+        disage::converters::to_rgb8(&add_array)
+            .save("test123.jpg")
+            .unwrap();
+        disage::converters::to_rgb8(&discr_main.clone().collect())
+            .save("test123_main.jpg")
+            .unwrap();
+        let mut max: u32 = 0;
+        let distances: Vec<u32> = discr_main
+            .pixels()
+            .iter()
+            .map(|p| {
+                match helpers::distance_dot_array(
+                    &p.value,
+                    &add_array,
+                    p.position,
+                    add_image.width() / 3,
+                    precision,
+                ) {
+                    Some((distance, pos)) => {
+                        let res = distance
+                            + distance_dot_dot(
+                                p.position,
+                                discr_add.pixel_at(pos).unwrap().position,
+                            );
+                        if res > max {
+                            max = res
+                        }
+                        res
+                    }
+                    _ => u32::MIN,
+                }
+            })
+            .collect();
+        discr_main
+            .pixels()
+            .iter()
+            .zip(distances.iter())
+            .for_each(|(p, v)| {
+                discr_main.modify_leaf(
+                    [(*v as u64 * u8::MAX as u64 / max as u64) as u8; 3],
+                    p.position,
+                );
+            });
+        disage::converters::to_rgb8(&discr_main.clone().collect())
+            .save("test_rgb.jpg")
+            .unwrap();
+        self.load_depth(disage::converters::to_luma8_from_rgb8(
+            &discr_main.collect(),
+        ))
     }
 
     pub fn width(&self) -> u32 {

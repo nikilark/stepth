@@ -79,38 +79,3 @@ pub fn normalize_brightness_rgb16(
     });
     res
 }
-
-pub fn broaden_depth(depth: &Vec<Vec<u32>>) -> Vec<Vec<u32>> {
-    let min = depth
-        .iter()
-        .map(|f| f.iter().min().unwrap_or(&0))
-        .min()
-        .unwrap_or(&0)
-        .clone();
-    let max = depth
-        .iter()
-        .map(|f| f.iter().max().unwrap_or(&u32::MAX))
-        .max()
-        .unwrap_or(&u32::MAX)
-        .clone();
-    let delta = (max - min) as f64;
-    let chunk_size = depth.len() / 8;
-    let mut res = depth.clone();
-    res.par_chunks_mut(1 + chunk_size).for_each(|c| {
-        c.iter_mut().for_each(|op| {
-            op.iter_mut()
-                .for_each(|v| *v = (((v.clone() - min) as f64 / delta) * u32::MAX as f64) as u32)
-        })
-    });
-    res
-}
-
-pub fn invert_depth(depth: &Vec<Vec<u32>>) -> Vec<Vec<u32>> {
-    let chunk_size = depth.len() / 8;
-    let mut res = depth.clone();
-    res.par_chunks_mut(1 + chunk_size).for_each(|c| {
-        c.iter_mut()
-            .for_each(|op| op.iter_mut().for_each(|v| *v = u32::MAX - *v))
-    });
-    res
-}
