@@ -1,11 +1,9 @@
-use crate::{
-    helpers::{self, distance_dot_dot},
-    mask_image::*,
-};
+use crate::{helpers, mask_image::*};
 use image::{DynamicImage, ImageBuffer, Luma};
+use rayon::prelude::*;
 use std::collections::HashMap;
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct DepthImage {
     pub image: ImageBuffer<image::Rgba<u8>, Vec<u8>>,
     pub depth: ImageBuffer<image::Luma<u8>, Vec<u8>>,
@@ -32,6 +30,20 @@ impl DepthImage {
         ))
     }
 
+    pub fn highlight_depth(&self) -> DynamicImage {
+        let mut res = self.image.clone();
+        res.pixels_mut()
+            .zip(self.depth.pixels())
+            .for_each(|(p, d)| {
+                let multiplier = d.0[0] as f32 / 255.0 * 2.0;
+                let adjust = |v: u8| (v as f32 * multiplier).max(0.0).min(255.0) as u8;
+                p.0[0] = adjust(p.0[0]);
+                p.0[1] = adjust(p.0[1]);
+                p.0[2] = adjust(p.0[2]);
+            });
+        DynamicImage::ImageRgba8(res)
+    }
+
     pub fn load_depth_from_file(&mut self, depth_path: &str) -> Result<(), std::io::Error> {
         let depth_image = image::open(depth_path);
         if depth_image.is_err() {
@@ -43,7 +55,11 @@ impl DepthImage {
         self.load_depth(depth_image.unwrap().to_luma8())
     }
 
-    pub fn load_depth_from_additional(&mut self, add_path: &str) -> Result<(), std::io::Error> {
+    pub fn open_depth_from_additional(
+        &mut self,
+        add_path: &str,
+        precision: [u8; 3],
+    ) -> Result<(), std::io::Error> {
         let add_image = image::open(add_path);
         if add_image.is_err() {
             return Err(std::io::Error::new(
@@ -51,73 +67,47 @@ impl DepthImage {
                 "Failed to open image",
             ));
         }
-        let add_image = add_image.unwrap().to_rgb8();
+        self.load_depth_from_additional(add_image.unwrap(), precision)
+    }
+
+    pub fn load_depth_from_additional(
+        &mut self,
+        add_image: image::DynamicImage,
+        precision: [u8; 3],
+    ) -> Result<(), std::io::Error> {
+        let add_image = add_image.to_rgb8();
+        let add_array = disage::converters::pixels_to_array(
+            &disage::converters::raw_rgb(&add_image),
+            add_image.width(),
+        );
         if add_image.width() != self.width() || add_image.height() != self.height() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
                 "Sizes don't match",
             ));
         }
-        let precision = [5u8; 3];
         let mut discr_main = disage::open::rgb_discrete(
             &image::DynamicImage::ImageRgba8(self.image.clone()).to_rgb8(),
             disage::hashers::MeanBrightnessHasher {},
             disage::checkers::BrightnessChecker { precision },
-            (10, 16),
+            (12, 30),
         );
-        let discr_add = disage::open::rgb_discrete(
-            &add_image,
-            disage::hashers::MeanBrightnessHasher {},
-            disage::checkers::BrightnessChecker { precision },
-            (10, 16),
-        );
-        let add_array = discr_add.clone().collect();
-        disage::converters::to_rgb8(&add_array)
-            .save("test123.jpg")
-            .unwrap();
-        disage::converters::to_rgb8(&discr_main.clone().collect())
-            .save("test123_main.jpg")
-            .unwrap();
-        let mut max: u32 = 0;
-        let distances: Vec<u32> = discr_main
-            .pixels()
-            .iter()
-            .map(|p| {
-                match helpers::distance_dot_array(
-                    &p.value,
-                    &add_array,
-                    p.position,
-                    add_image.width() / 3,
-                    precision,
-                ) {
-                    Some((distance, pos)) => {
-                        let res = distance
-                            + distance_dot_dot(
-                                p.position,
-                                discr_add.pixel_at(pos).unwrap().position,
-                            );
-                        if res > max {
-                            max = res
-                        }
-                        res
-                    }
-                    _ => u32::MIN,
-                }
+        let mut pixels: Vec<disage::DiscretePixel<&mut [u8; 3]>> = discr_main.pixels_mut();
+        let chunk_size = pixels.len() / 8;
+        pixels.par_chunks_mut(chunk_size).for_each(|v| {
+            v.iter_mut().for_each(|p| {
+                let (d, _) =
+                    helpers::distance_dot_array(p.value, &add_array, p.position, 255, precision)
+                        .unwrap_or((u32::MIN, disage::Position::new(0, 0)));
+                *p.value = [d as u8; 3]
             })
-            .collect();
-        discr_main
-            .pixels()
-            .iter()
-            .zip(distances.iter())
-            .for_each(|(p, v)| {
-                discr_main.modify_leaf(
-                    [(*v as u64 * u8::MAX as u64 / max as u64) as u8; 3],
-                    p.position,
-                );
-            });
-        disage::converters::to_rgb8(&discr_main.clone().collect())
-            .save("test_rgb.jpg")
-            .unwrap();
+        });
+        let max = pixels.iter().max_by_key(|p| p.value[0]).unwrap().value[0];
+        pixels.par_chunks_mut(chunk_size).for_each(|v| {
+            v.iter_mut().for_each(|p| {
+                *p.value = [(p.value[0] as u64 * u8::MAX as u64 / max as u64) as u8; 3]
+            })
+        });
         self.load_depth(disage::converters::to_luma8_from_rgb8(
             &discr_main.collect(),
         ))
@@ -226,11 +216,9 @@ impl DepthImage {
                 }
             }
         }
-        let mut res = MaskImage {
+        MaskImage {
             image: self.image.clone(),
             mask,
-        };
-        res.apply_mask();
-        res
+        }
     }
 }

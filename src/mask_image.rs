@@ -3,7 +3,7 @@ use image::{DynamicImage, ImageBuffer, Luma};
 pub const MASK_TRUE: Luma<u8> = Luma([u8::MAX; 1]);
 pub const MASK_FALSE: Luma<u8> = Luma([u8::MIN; 1]);
 
-#[derive(Clone)]
+#[derive(Clone, Debug, Default)]
 pub struct MaskImage {
     pub image: ImageBuffer<image::Rgba<u8>, Vec<u8>>,
     pub mask: ImageBuffer<image::Luma<u8>, Vec<u8>>,
@@ -11,7 +11,11 @@ pub struct MaskImage {
 
 impl MaskImage {
     pub fn open(image_path: &str) -> Self {
-        let image = image::open(image_path).unwrap().to_rgba8();
+        MaskImage::from_image(image::open(image_path).unwrap())
+    }
+
+    pub fn from_image(img: DynamicImage) -> Self {
+        let image = img.to_rgba8();
         let mask = ImageBuffer::from_pixel(image.width(), image.height(), MASK_TRUE);
         MaskImage { image, mask }
     }
@@ -40,6 +44,24 @@ impl MaskImage {
             ));
         }
         self.load_mask(mask_image.unwrap().to_luma8())
+    }
+
+    pub fn highlight_mask(&self) -> DynamicImage {
+        let mut res = self.image.clone();
+        res.pixels_mut().zip(self.mask.pixels()).for_each(|(p, d)| {
+            if *d == MASK_TRUE {
+                let multiplier = 2.0;
+                let adjust = |v: u8, pos: bool| {
+                    (v as f32 * if pos { multiplier } else { 1.0 / multiplier })
+                        .max(0.0)
+                        .min(255.0) as u8
+                };
+                p.0[0] = adjust(p.0[0], true);
+                p.0[1] = adjust(p.0[1], false);
+                p.0[2] = adjust(p.0[2], false);
+            }
+        });
+        DynamicImage::ImageRgba8(res)
     }
 
     pub fn width(&self) -> u32 {
@@ -79,23 +101,11 @@ impl MaskImage {
     }
 
     pub fn image_brightness(&mut self, value: i32) {
-        self.image
-            .pixels_mut()
-            .zip(self.mask.pixels())
-            .for_each(|(pix, m)| {
-                if *m == MASK_TRUE {
-                    let transform = |pix: u8| {
-                        let raw_value = pix as i32 + value;
-                        raw_value.min(u8::MAX.into()).max(u8::MIN.into()) as u8
-                    };
-                    pix.0 = [
-                        transform(pix.0[0]),
-                        transform(pix.0[1]),
-                        transform(pix.0[2]),
-                        pix.0[3],
-                    ];
-                }
-            });
+        let image_to_mod = DynamicImage::ImageRgba8(self.image.clone()).brighten(value);
+        self.image_replace(
+            &MaskImage::from_image(image_to_mod),
+            disage::Position::new(0, 0),
+        );
     }
 
     pub fn mask_copy(&mut self, other: &MaskImage) {

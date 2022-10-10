@@ -1,5 +1,4 @@
 use image::{self, ImageBuffer, Luma, Rgb};
-use rayon::prelude::*;
 
 pub fn normalize_brightness_luma16(
     img1: &ImageBuffer<Luma<u16>, Vec<u16>>,
