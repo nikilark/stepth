@@ -20,6 +20,14 @@ impl MaskImage {
         MaskImage { image, mask }
     }
 
+    pub fn image(&self) -> image::DynamicImage {
+        image::DynamicImage::ImageRgba8(self.image.clone())
+    }
+
+    pub fn mask(&self) -> image::DynamicImage {
+        image::DynamicImage::ImageLuma8(self.mask.clone())
+    }
+
     pub fn load_mask(
         &mut self,
         mask: ImageBuffer<image::Luma<u8>, Vec<u8>>,
@@ -102,6 +110,22 @@ impl MaskImage {
 
     pub fn image_brightness(&mut self, value: i32) {
         let image_to_mod = DynamicImage::ImageRgba8(self.image.clone()).brighten(value);
+        self.image_replace(
+            &MaskImage::from_image(image_to_mod),
+            disage::Position::new(0, 0),
+        );
+    }
+
+    pub fn image_contrast(&mut self, value: i32) {
+        let image_to_mod = DynamicImage::ImageRgba8(self.image.clone()).adjust_contrast(value as f32);
+        self.image_replace(
+            &MaskImage::from_image(image_to_mod),
+            disage::Position::new(0, 0),
+        );
+    }
+
+    pub fn image_sharpness(&mut self, value: i32) {
+        let image_to_mod = DynamicImage::ImageRgba8(self.image.clone()).unsharpen(value as f32, 20);
         self.image_replace(
             &MaskImage::from_image(image_to_mod),
             disage::Position::new(0, 0),

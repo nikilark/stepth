@@ -1,5 +1,5 @@
 use super::*;
-use disage::pixels::PixelOpps;
+use disage::{pixels::PixelOpps, Position};
 
 // pub fn relative_pos(pos: Position, size: Dimensions, size_to: Dimensions) -> Position {
 //     let (rx, ry) = (
