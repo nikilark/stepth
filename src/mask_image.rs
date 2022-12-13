@@ -132,6 +132,14 @@ impl MaskImage {
         );
     }
 
+    pub fn image_blur(&mut self, value: i32) {
+        let image_to_mod = DynamicImage::ImageRgba8(self.image.clone()).blur(value as f32);
+        self.image_replace(
+            &MaskImage::from_image(image_to_mod),
+            disage::Position::new(0, 0),
+        );
+    }
+
     pub fn mask_copy(&mut self, other: &MaskImage) {
         self.load_mask(other.mask.clone()).unwrap()
     }
