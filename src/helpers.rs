@@ -1,16 +1,4 @@
-use super::*;
-use disage::pixels::PixelOpps;
-
-// pub fn relative_pos(pos: Position, size: Dimensions, size_to: Dimensions) -> Position {
-//     let (rx, ry) = (
-//         (pos.x as f64 / size.width as f64),
-//         (pos.y as f64 / size.height as f64),
-//     );
-//     Position {
-//         x: (size_to.width as f64 * rx) as u32,
-//         y: (size_to.height as f64 * ry) as u32,
-//     }
-// }
+use disage::{pixels::PixelOpps, Position};
 
 pub fn distance_dot_dot(f: Position, s: Position) -> u32 {
     let (x1, y1) = (f.x as i64, f.y as i64);
