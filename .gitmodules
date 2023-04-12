@@ -1,0 +1,3 @@
+[submodule "deps/disage"]
+	path = deps/disage
+	url = https://github.com/ZhavoronkovN/disage.git

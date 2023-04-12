@@ -1,5 +1,5 @@
 use crate::{helpers, mask_image::*};
-use image::{DynamicImage, ImageBuffer, Luma, imageops};
+use image::{imageops, DynamicImage, ImageBuffer, Luma};
 use rayon::prelude::*;
 use std::collections::HashMap;
 
@@ -10,10 +10,14 @@ pub struct DepthImage {
 }
 
 impl DepthImage {
-    pub fn open(image_path: &str) -> Self {
-        let image = image::open(image_path).unwrap().to_rgba8();
+    pub fn open(image_path: &str) -> Result<Self, std::io::Error> {
+        let image = image::open(image_path)
+            .map_err(|_| {
+                std::io::Error::new(std::io::ErrorKind::InvalidInput, "Failed to open image")
+            })?
+            .to_rgba8();
         let depth = ImageBuffer::from_pixel(image.width(), image.height(), Luma([0u8]));
-        DepthImage { image, depth }
+        Ok(DepthImage { image, depth })
     }
 
     pub fn from_image(img: DynamicImage) -> Self {
@@ -58,7 +62,7 @@ impl DepthImage {
         DynamicImage::ImageRgba8(res)
     }
 
-    pub fn load_depth_from_file(&mut self, depth_path: &str) -> Result<(), std::io::Error> {
+    pub fn open_depth(&mut self, depth_path: &str) -> Result<(), std::io::Error> {
         let depth_image = image::open(depth_path);
         if depth_image.is_err() {
             return Err(std::io::Error::new(
@@ -89,8 +93,7 @@ impl DepthImage {
         add_image: image::DynamicImage,
         precision: [u8; 3],
     ) -> Result<(), std::io::Error> {
-        let resize_size = 1000;
-        let add_image = add_image.resize(resize_size, resize_size,imageops::Nearest).to_rgb8();
+        let add_image = add_image.to_rgb8();
         let add_array = disage::converters::pixels_to_array(
             &disage::converters::raw_rgb(&add_image),
             add_image.width(),
@@ -99,18 +102,19 @@ impl DepthImage {
         let min_splits = 16 as usize;
         let max_splits = pix_count.log2().ceil() as usize;
         let mut discr_main = disage::open::rgb_discrete(
-            &image::DynamicImage::ImageRgba8(self.image.clone()).resize(resize_size, resize_size, imageops::Nearest).to_rgb8(),
+            &image::DynamicImage::ImageRgba8(self.image.clone()).to_rgb8(),
             disage::hashers::MeanBrightnessHasher {},
             disage::checkers::BrightnessChecker { precision },
             (min_splits, max_splits),
         );
-        println!("Compression : {}", discr_main.compression());
-        disage::converters::to_rgb8(&discr_main.clone().collect()).save("discretization.jpg").unwrap();
         let mut pixels: Vec<disage::DiscretePixel<&mut [u8; 3]>> = discr_main.pixels_mut();
         let chunk_size = pixels.len() / 8;
         pixels.par_chunks_mut(chunk_size).for_each(|v| {
             v.iter_mut().for_each(|p| {
-                let middle = disage::Position::new((p.position.x + p.size.width)/2, (p.position.y + p.size.height)/2);
+                let middle = disage::Position::new(
+                    (p.position.x + p.size.width) / 2,
+                    (p.position.y + p.size.height) / 2,
+                );
                 let (d, _) =
                     helpers::distance_dot_array(p.value, &add_array, middle, 255, precision)
                         .unwrap_or((u32::MIN, disage::Position::new(0, 0)));
@@ -124,8 +128,10 @@ impl DepthImage {
             })
         });
         let depth_image = DynamicImage::ImageLuma8(disage::converters::to_luma8_from_rgb8(
-            &discr_main.collect())).resize(self.width(), self.height(), imageops::Gaussian).to_luma8();
-        depth_image.clone().save("depth.jpg").unwrap();
+            &discr_main.collect(),
+        ))
+        .resize(self.width(), self.height(), imageops::Gaussian)
+        .to_luma8();
         self.load_depth(depth_image)
     }
 
@@ -206,13 +212,9 @@ impl DepthImage {
         let img_min = self.depth.as_raw().iter().min().unwrap().clone();
         let img_max = self.depth.as_raw().iter().max().unwrap().clone();
         let init_centers = (img_min..img_max)
-        .step_by(((img_max-img_min) / (zones - 1)) as usize - 1)
-        .collect();
-        println!("{:?}", init_centers);
-        inner(
-            self.depth.as_raw(),
-            init_centers,
-        )
+            .step_by(((img_max - img_min) / (zones - 1)) as usize - 1)
+            .collect();
+        inner(self.depth.as_raw(), init_centers)
     }
 
     pub fn select_foreground(&mut self) -> MaskImage {

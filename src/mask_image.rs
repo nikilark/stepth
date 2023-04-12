@@ -194,8 +194,8 @@ impl MaskImage {
         self.mask.pixels_mut().for_each(|p| p.0[0] = 255 - p.0[0]);
     }
 
-    pub fn save(&self, path: &str) -> () {
-        self.image.save(path).unwrap();
+    pub fn save(&self, path: &str) -> Result<(), image::ImageError> {
+        Ok(self.image.save(path)?)
     }
 
     pub fn mask_reset(&mut self) {
